@@ -25,11 +25,18 @@ async function request<T>(
   path: string,
   { method, body, headers }: RequestOptions,
 ): Promise<T> {
+  // Only declare a JSON content-type when we actually send a body — Fastify's
+  // default parser rejects an empty body when content-type is application/json
+  // (FST_ERR_CTP_EMPTY_JSON_BODY), which would break bodyless POST/DELETE calls.
+  const hasBody = body !== undefined;
   const response = await fetch(`${API_URL}${path}`, {
     method,
     credentials: "include",
-    headers: { "Content-Type": "application/json", ...headers },
-    body: body === undefined ? undefined : JSON.stringify(body),
+    headers: {
+      ...(hasBody ? { "Content-Type": "application/json" } : {}),
+      ...headers,
+    },
+    body: hasBody ? JSON.stringify(body) : undefined,
   });
 
   if (response.status === 204) {

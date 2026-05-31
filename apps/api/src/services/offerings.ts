@@ -1,4 +1,13 @@
-import { and, desc, eq, ilike, inArray } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  ilike,
+  inArray,
+  isNotNull,
+  isNull,
+} from "drizzle-orm";
 import { schema, type Offering, type OfferingSource } from "@bespoke/db";
 import { JOB_NAME, QUEUE_NAME, enqueueJob } from "@bespoke/queue";
 import {
@@ -11,9 +20,29 @@ import { db } from "../context";
 import { queues } from "../queue";
 import { clampLimit, decodeCursor, keysetBefore, toPage } from "./_cursor";
 
+/** Max source URLs accepted at create time — bounds background scrape work. */
+export const MAX_SOURCE_URLS = 5;
+
 export interface CreateOfferingInput extends OfferingContextFields {
-  /** Optional URL to scrape and merge into the offering in the background. */
+  /** Optional single URL to scrape (kept for backward compatibility). */
   sourceUrl?: string;
+  /** Optional URLs to scrape and combine into the offering in the background. */
+  sourceUrls?: string[];
+}
+
+/** Trim, drop empties, dedupe, and cap a list of source URLs. */
+function normalizeSourceUrls(input: CreateOfferingInput): string[] {
+  const all = [input.sourceUrl, ...(input.sourceUrls ?? [])];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of all) {
+    const url = raw?.trim();
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    out.push(url);
+    if (out.length >= MAX_SOURCE_URLS) break;
+  }
+  return out;
 }
 
 export type UpdateOfferingInput = Partial<OfferingContextFields>;
@@ -35,10 +64,13 @@ async function recordAnalytics(
 }
 
 /**
- * Create an offering source row, mirror a Postgres scrape-job row, and enqueue
- * the scrape. The BullMQ job id is written back so the api can correlate state.
+ * Persist one offering source + its mirror scrape-job row as `pending` with no
+ * BullMQ id yet. The job is NOT enqueued here — `enqueueNextPendingSource` does
+ * that one at a time so same-offering scrapes never run in parallel (the worker
+ * combine step does a read-modify-write on the offering and would otherwise
+ * clobber itself).
  */
-async function enqueueOfferingScrape(
+async function createSourceRow(
   userId: string,
   offeringId: string,
   sourceUrl: string,
@@ -48,28 +80,76 @@ async function enqueueOfferingScrape(
     .values({ offeringId, sourceType: "url", sourceUrl })
     .returning();
 
-  const [job] = await db
-    .insert(schema.scrapeJobs)
-    .values({
-      userId,
-      jobType: JOB_NAME.scrapeOfferingSource,
-      status: "pending",
-      input: { sourceId: source!.id, offeringId },
-      queueName: QUEUE_NAME.scrape,
-      offeringId,
-    })
-    .returning();
-
-  const bullmqJobId = await enqueueJob(queues, JOB_NAME.scrapeOfferingSource, {
-    sourceId: source!.id,
-    offeringId,
+  await db.insert(schema.scrapeJobs).values({
     userId,
+    jobType: JOB_NAME.scrapeOfferingSource,
+    status: "pending",
+    input: { sourceId: source!.id, offeringId },
+    queueName: QUEUE_NAME.scrape,
+    offeringId,
   });
+}
 
+/**
+ * Enqueue the next not-yet-queued source scrape for an offering, but only when
+ * none is already in flight — this serializes the chain so same-offering scrapes
+ * never run concurrently (the worker combine step reads then writes the offering
+ * and would otherwise clobber itself). No-op when a scrape is already
+ * queued/running or nothing is pending. Mirrored in the worker so each finished
+ * scrape kicks off the next.
+ */
+export async function enqueueNextPendingSource(
+  offeringId: string,
+): Promise<void> {
+  const offeringJobs = and(
+    eq(schema.scrapeJobs.offeringId, offeringId),
+    eq(schema.scrapeJobs.jobType, JOB_NAME.scrapeOfferingSource),
+  );
+
+  // In flight = actively processing, OR enqueued (pending with a BullMQ id and
+  // waiting to be picked up). If anything is in flight, the chain is moving.
+  const [inFlight] = await db
+    .select({ id: schema.scrapeJobs.id })
+    .from(schema.scrapeJobs)
+    .where(
+      and(
+        offeringJobs,
+        inArray(schema.scrapeJobs.status, ["pending", "processing"]),
+        isNotNull(schema.scrapeJobs.bullmqJobId),
+      ),
+    )
+    .limit(1);
+  if (inFlight) return;
+
+  // Oldest pending source not yet handed to BullMQ is next.
+  const [next] = await db
+    .select({
+      jobId: schema.scrapeJobs.id,
+      userId: schema.scrapeJobs.userId,
+      input: schema.scrapeJobs.input,
+    })
+    .from(schema.scrapeJobs)
+    .where(
+      and(
+        offeringJobs,
+        eq(schema.scrapeJobs.status, "pending"),
+        isNull(schema.scrapeJobs.bullmqJobId),
+      ),
+    )
+    .orderBy(asc(schema.scrapeJobs.createdAt))
+    .limit(1);
+  if (!next) return;
+
+  const payload = next.input as { sourceId: string; offeringId: string };
+  const bullmqJobId = await enqueueJob(queues, JOB_NAME.scrapeOfferingSource, {
+    sourceId: payload.sourceId,
+    offeringId,
+    userId: next.userId,
+  });
   await db
     .update(schema.scrapeJobs)
     .set({ bullmqJobId })
-    .where(eq(schema.scrapeJobs.id, job!.id));
+    .where(eq(schema.scrapeJobs.id, next.jobId));
 }
 
 /**
@@ -131,6 +211,7 @@ export async function createOffering(
   input: CreateOfferingInput,
 ): Promise<OfferingWithSources> {
   const compiledContext = compileOfferingContext(input);
+  const urls = normalizeSourceUrls(input);
 
   const [offering] = await db
     .insert(schema.offerings)
@@ -143,14 +224,19 @@ export async function createOffering(
       uniqueValueProp: input.uniqueValueProp,
       proofPoints: input.proofPoints,
       compiledContext,
-      // A pending scrape keeps the offering in `scraping` until the worker
-      // fills the fields and flips it to `ready` (or back to draft on failure).
-      status: input.sourceUrl ? "scraping" : compiledContext ? "ready" : "draft",
+      // Pending scrapes keep the offering in `scraping` until the worker chain
+      // finishes and flips it to `ready` (or back to draft on failure).
+      status: urls.length > 0 ? "scraping" : compiledContext ? "ready" : "draft",
     })
     .returning();
 
-  if (input.sourceUrl) {
-    await enqueueOfferingScrape(userId, offering!.id, input.sourceUrl);
+  // Persist every source up front so the detail page lists them immediately,
+  // then enqueue only the first — the worker chains the rest one at a time.
+  for (const url of urls) {
+    await createSourceRow(userId, offering!.id, url);
+  }
+  if (urls.length > 0) {
+    await enqueueNextPendingSource(offering!.id);
   }
 
   await recordAnalytics(userId, offering!.id);
@@ -239,7 +325,10 @@ export async function addOfferingSource(
   const existing = await getOffering(userId, offeringId);
   if (!existing) return null;
 
-  await enqueueOfferingScrape(userId, offeringId, sourceUrl);
+  await createSourceRow(userId, offeringId, sourceUrl);
+  // Enqueue now only if no scrape is in flight; otherwise this queues behind the
+  // active chain (the worker picks it up when the current scrape finishes).
+  await enqueueNextPendingSource(offeringId);
   // Reflect the in-flight scrape so the UI pulses until the worker finishes.
   await db
     .update(schema.offerings)

@@ -112,7 +112,6 @@ export function GenerateMessage() {
           toOption={(p) => ({ id: p.id, label: p.name })}
           renderTrigger={({ open, selected }) => (
             <Block
-              index={1}
               label="Prospect"
               placeholder="Choose who you're reaching"
               selected={selected}
@@ -141,7 +140,6 @@ export function GenerateMessage() {
           }
           renderTrigger={({ open, selected }) => (
             <Block
-              index={2}
               label="Offering"
               placeholder="What you're pitching"
               selected={selected}
@@ -163,7 +161,6 @@ export function GenerateMessage() {
           })}
           renderTrigger={({ open, selected }) => (
             <Block
-              index={3}
               label="Prompt"
               placeholder="The voice and angle to use"
               selected={selected}
@@ -250,13 +247,11 @@ export function GenerateMessage() {
  * the picker modal.
  */
 function Block({
-  index,
   label,
   placeholder,
   selected,
   onOpen,
 }: {
-  index: number;
   label: string;
   placeholder: string;
   selected: PickerOption | null;
@@ -283,11 +278,7 @@ function Block({
             : "bg-bg-surface-hover text-text-muted ring-1 ring-inset ring-border-default group-hover:text-(--text-secondary)]",
         )}
       >
-        {filled ? (
-          <Check className="h-4 w-4" />
-        ) : (
-          String(index).padStart(2, "0")
-        )}
+        {filled ? <Check className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
       </span>
 
       <div className="min-w-0">

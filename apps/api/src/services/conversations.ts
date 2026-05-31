@@ -1,11 +1,16 @@
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, isNull } from "drizzle-orm";
 import {
   schema,
   type Conversation,
   type ConversationMessage,
 } from "@bespoke/db";
 import { JOB_NAME, QUEUE_NAME, enqueueJob } from "@bespoke/queue";
-import type { ConversationStatus } from "@bespoke/shared";
+import type {
+  ConversationParticipants,
+  ConversationStatus,
+  MessageRole,
+  StartConversationCandidate,
+} from "@bespoke/shared";
 import { db } from "../context";
 import { queues } from "../queue";
 import { getSettings } from "./settings";
@@ -14,12 +19,25 @@ export interface ConversationWithMessages extends Conversation {
   messages: ConversationMessage[];
 }
 
+/** A conversation enriched for the list view: who/what it is about + a preview. */
+export interface ConversationListItem extends Conversation {
+  participants: ConversationParticipants;
+  lastMessage: { role: MessageRole; content: string; createdAt: Date } | null;
+  messageCount: number;
+  awaitingReply: boolean;
+}
+
+/** A full thread plus the prospect/offering/prompt behind it. */
+export interface ConversationDetail extends ConversationWithMessages {
+  participants: ConversationParticipants;
+}
+
 export type CreateConversationResult =
-  | { status: "ok"; conversation: ConversationWithMessages }
+  | { status: "ok"; conversation: ConversationDetail }
   | { status: "not_found" };
 
 export type AddReplyResult =
-  | { status: "ok"; conversation: ConversationWithMessages }
+  | { status: "ok"; conversation: ConversationDetail }
   | { status: "not_found" };
 
 /** Confirm a conversation belongs to the user (via its prospect) and load it. */
@@ -51,6 +69,77 @@ async function loadThread(
     .from(schema.conversationMessages)
     .where(eq(schema.conversationMessages.conversationId, conversationId))
     .orderBy(asc(schema.conversationMessages.createdAt));
+}
+
+/**
+ * Resolve the prospect, offering, and prompt behind a conversation. The offering
+ * and prompt are read from the generation that produced the opening message
+ * (`initialMessageId`); they are null when that link is missing or the source
+ * records were deleted.
+ */
+async function loadParticipants(
+  prospectId: string,
+  initialMessageId: string | null,
+): Promise<ConversationParticipants> {
+  const [prospect] = await db
+    .select({
+      id: schema.prospects.id,
+      name: schema.prospects.name,
+      jobTitle: schema.prospects.jobTitle,
+      companyName: schema.prospects.companyName,
+      email: schema.prospects.email,
+      notes: schema.prospects.notes,
+    })
+    .from(schema.prospects)
+    .where(eq(schema.prospects.id, prospectId));
+
+  let offering: ConversationParticipants["offering"] = null;
+  let prompt: ConversationParticipants["prompt"] = null;
+
+  if (initialMessageId) {
+    const [gen] = await db
+      .select({
+        offeringId: schema.aiGenerations.offeringId,
+        promptId: schema.aiGenerations.promptId,
+      })
+      .from(schema.generatedMessages)
+      .innerJoin(
+        schema.aiGenerations,
+        eq(schema.generatedMessages.generationId, schema.aiGenerations.id),
+      )
+      .where(eq(schema.generatedMessages.id, initialMessageId));
+
+    if (gen?.offeringId) {
+      const [o] = await db
+        .select({
+          id: schema.offerings.id,
+          name: schema.offerings.name,
+          description: schema.offerings.description,
+          summary: schema.offerings.summary,
+          targetAudience: schema.offerings.targetAudience,
+          problemSolved: schema.offerings.problemSolved,
+          uniqueValueProp: schema.offerings.uniqueValueProp,
+        })
+        .from(schema.offerings)
+        .where(eq(schema.offerings.id, gen.offeringId));
+      offering = o ?? null;
+    }
+
+    if (gen?.promptId) {
+      const [p] = await db
+        .select({
+          id: schema.prompts.id,
+          name: schema.prompts.name,
+          systemPrompt: schema.prompts.systemPrompt,
+          isDefault: schema.prompts.isDefault,
+        })
+        .from(schema.prompts)
+        .where(eq(schema.prompts.id, gen.promptId));
+      prompt = p ?? null;
+    }
+  }
+
+  return { prospect: prospect ?? null, offering, prompt };
 }
 
 /**
@@ -102,15 +191,21 @@ export async function createFromMessage(
     metadata: { generationId: row.generationId },
   });
 
-  const messages = await loadThread(conversation!.id);
-  return { status: "ok", conversation: { ...conversation!, messages } };
+  const [messages, participants] = await Promise.all([
+    loadThread(conversation!.id),
+    loadParticipants(row.prospectId, messageId),
+  ]);
+  return {
+    status: "ok",
+    conversation: { ...conversation!, messages, participants },
+  };
 }
 
 /** Conversations for the user's prospects, newest first; optional prospect filter. */
 export async function listConversations(
   userId: string,
   prospectId?: string,
-): Promise<Conversation[]> {
+): Promise<ConversationListItem[]> {
   const where = prospectId
     ? and(
         eq(schema.prospects.userId, userId),
@@ -128,17 +223,100 @@ export async function listConversations(
     .where(where)
     .orderBy(desc(schema.conversations.createdAt));
 
-  return rows.map((r) => r.conversation);
+  return Promise.all(
+    rows.map(async ({ conversation }) => {
+      const [messages, participants] = await Promise.all([
+        loadThread(conversation.id),
+        loadParticipants(
+          conversation.prospectId,
+          conversation.initialMessageId,
+        ),
+      ]);
+      const lastMessage = messages[messages.length - 1] ?? null;
+      return {
+        ...conversation,
+        participants,
+        lastMessage: lastMessage
+          ? {
+              role: lastMessage.role,
+              content: lastMessage.content,
+              createdAt: lastMessage.createdAt,
+            }
+          : null,
+        messageCount: messages.length,
+        awaitingReply: lastMessage?.role === "prospect",
+      };
+    }),
+  );
 }
 
 export async function getConversation(
   userId: string,
   conversationId: string,
-): Promise<ConversationWithMessages | null> {
+): Promise<ConversationDetail | null> {
   const conversation = await ownedConversation(userId, conversationId);
   if (!conversation) return null;
-  const messages = await loadThread(conversationId);
-  return { ...conversation, messages };
+  const [messages, participants] = await Promise.all([
+    loadThread(conversationId),
+    loadParticipants(conversation.prospectId, conversation.initialMessageId),
+  ]);
+  return { ...conversation, messages, participants };
+}
+
+/**
+ * Generated messages eligible to seed a new conversation: completed and not yet
+ * attached to a thread, across all of the user's prospects. Ordered favourites
+ * first, then newest, to match the picker layout.
+ */
+export async function listStartCandidates(
+  userId: string,
+): Promise<StartConversationCandidate[]> {
+  const rows = await db
+    .select({
+      messageId: schema.generatedMessages.id,
+      content: schema.generatedMessages.content,
+      isFavorite: schema.generatedMessages.isFavorite,
+      createdAt: schema.generatedMessages.createdAt,
+      model: schema.aiGenerations.model,
+      prospectId: schema.prospects.id,
+      prospectName: schema.prospects.name,
+      offeringName: schema.offerings.name,
+    })
+    .from(schema.generatedMessages)
+    .innerJoin(
+      schema.aiGenerations,
+      eq(schema.generatedMessages.generationId, schema.aiGenerations.id),
+    )
+    .innerJoin(
+      schema.prospects,
+      eq(schema.aiGenerations.prospectId, schema.prospects.id),
+    )
+    .leftJoin(
+      schema.offerings,
+      eq(schema.aiGenerations.offeringId, schema.offerings.id),
+    )
+    .where(
+      and(
+        eq(schema.aiGenerations.userId, userId),
+        eq(schema.aiGenerations.status, "completed"),
+        isNull(schema.generatedMessages.conversationId),
+      ),
+    )
+    .orderBy(
+      desc(schema.generatedMessages.isFavorite),
+      desc(schema.generatedMessages.createdAt),
+    );
+
+  return rows.map((r) => ({
+    messageId: r.messageId,
+    content: r.content,
+    isFavorite: r.isFavorite,
+    createdAt: r.createdAt.toISOString(),
+    prospectId: r.prospectId,
+    prospectName: r.prospectName,
+    offeringName: r.offeringName ?? null,
+    model: r.model,
+  }));
 }
 
 /**
@@ -212,8 +390,11 @@ export async function addReply(
     .set({ bullmqJobId })
     .where(eq(schema.generationJobs.id, jobRow!.id));
 
-  const messages = await loadThread(conversationId);
-  return { status: "ok", conversation: { ...conversation, messages } };
+  const [messages, participants] = await Promise.all([
+    loadThread(conversationId),
+    loadParticipants(conversation.prospectId, conversation.initialMessageId),
+  ]);
+  return { status: "ok", conversation: { ...conversation, messages, participants } };
 }
 
 export async function setStatus(

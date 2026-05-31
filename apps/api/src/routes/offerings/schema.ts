@@ -11,7 +11,9 @@ export const createOfferingBody = z.object({
   problemSolved: mediumText.optional(),
   uniqueValueProp: mediumText.optional(),
   proofPoints: mediumText.optional(),
+  // Single URL kept for backward compatibility; sourceUrls is the multi-URL form.
   sourceUrl: z.string().url().optional(),
+  sourceUrls: z.array(z.string().url()).max(5).optional(),
 });
 
 export const updateOfferingBody = z.object({

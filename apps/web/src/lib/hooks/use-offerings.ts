@@ -32,9 +32,12 @@ export interface CreateOfferingInput {
   uniqueValueProp?: string;
   proofPoints?: string;
   sourceUrl?: string;
+  sourceUrls?: string[];
 }
 
-export type UpdateOfferingInput = Partial<Omit<CreateOfferingInput, "sourceUrl">>;
+export type UpdateOfferingInput = Partial<
+  Omit<CreateOfferingInput, "sourceUrl" | "sourceUrls">
+>;
 
 const PAGE_SIZE = 20;
 
@@ -57,8 +60,9 @@ function optimisticOffering(input: CreateOfferingInput): Offering {
     uniqueValueProp: input.uniqueValueProp ?? null,
     proofPoints: input.proofPoints ?? null,
     compiledContext: null,
-    // A URL means a background scrape is starting — pulse immediately.
-    status: input.sourceUrl ? "scraping" : "draft",
+    // Any URL means a background scrape is starting — pulse immediately.
+    status:
+      input.sourceUrl || input.sourceUrls?.length ? "scraping" : "draft",
     createdAt: now,
     updatedAt: now,
   } as Offering;

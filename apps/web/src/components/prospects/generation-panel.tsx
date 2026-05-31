@@ -39,6 +39,7 @@ import {
   type PickerOption,
 } from "@/components/shared/entity-picker";
 import { StatusBadge } from "@/components/shared/status-badge";
+import { ConfirmDialog } from "@/components/shared/confirm-dialog";
 
 /**
  * Message generation for a prospect: pick an offering + prompt, enqueue a
@@ -184,18 +185,80 @@ function MessageItem({
   const regenerate = useRegenerateMessage(prospectId);
   const createConversation = useCreateConversation();
 
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
   const pending =
     message.generationStatus === "pending" ||
     message.generationStatus === "processing";
 
+  // Lock the action row while any single-message mutation is in flight.
+  const busy =
+    rate.isPending ||
+    favorite.isPending ||
+    copy.isPending ||
+    remove.isPending ||
+    regenerate.isPending ||
+    createConversation.isPending;
+
   async function handleCopy() {
     await navigator.clipboard.writeText(message.content).catch(() => {});
-    copy.mutate(message.id);
+    copy.mutate(message.id, {
+      onError: (error) => toast.error(error.message),
+    });
     toast.success("Copied to clipboard");
   }
 
+  function handleRate(rating: number) {
+    rate.mutate(
+      { id: message.id, rating },
+      {
+        onSuccess: () => toast.success(`Rated ${rating} ★`),
+        onError: (error) => toast.error(error.message),
+      },
+    );
+  }
+
+  function handleFavorite() {
+    const next = !message.isFavorite;
+    favorite.mutate(
+      { id: message.id, isFavorite: next },
+      {
+        onSuccess: () =>
+          toast.success(next ? "Added to favorites" : "Removed from favorites"),
+        onError: (error) => toast.error(error.message),
+      },
+    );
+  }
+
+  function handleRegenerate() {
+    regenerate.mutate(message.id, {
+      onSuccess: () => toast.success("Regenerating message…"),
+      onError: (error) => toast.error(error.message),
+    });
+  }
+
+  function handleStartConversation() {
+    createConversation.mutate(message.id, {
+      onSuccess: (conversation) => {
+        toast.success("Conversation started");
+        router.push(`/dashboard/conversations/${conversation.id}`);
+      },
+      onError: (error) => toast.error(error.message),
+    });
+  }
+
+  function handleDelete() {
+    remove.mutate(message.id, {
+      onSuccess: () => {
+        toast.success("Message deleted");
+        setConfirmDelete(false);
+      },
+      onError: (error) => toast.error(error.message),
+    });
+  }
+
   return (
-    <div className="rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface)] p-4">
+    <div className="rounded-lg border border-[var(--border-default)] bg-[var(--bg-surface)] p-4 transition-colors hover:border-[var(--border-strong)] hover:bg-[var(--bg-surface-hover)]">
       <div className="mb-2 flex items-center justify-between gap-2">
         <span className="truncate text-xs text-[var(--text-muted)]">
           {message.model}
@@ -221,8 +284,8 @@ function MessageItem({
             <button
               key={n}
               type="button"
-              onClick={() => rate.mutate({ id: message.id, rating: n })}
-              disabled={pending}
+              onClick={() => handleRate(n)}
+              disabled={pending || busy}
               aria-label={`Rate ${n}`}
               className="p-0.5 disabled:opacity-40"
             >
@@ -241,54 +304,73 @@ function MessageItem({
         <Button
           variant="ghost"
           size="sm"
-          onClick={() =>
-            favorite.mutate({ id: message.id, isFavorite: !message.isFavorite })
-          }
+          onClick={handleFavorite}
+          disabled={busy}
         >
           <Heart
             className={cn(
-              "h-4 w-4",
+              "h-4 w-4 transition-all",
               message.isFavorite
-                ? "fill-[var(--state-favorite)] text-[var(--state-favorite)]"
+                ? "fill-[var(--state-favorite)] text-[var(--state-favorite)] drop-shadow-[0_0_6px_var(--state-favorite)]"
                 : "",
             )}
           />
         </Button>
-        <Button variant="ghost" size="sm" onClick={handleCopy}>
-          <Copy className="h-4 w-4" />
+        <Button variant="ghost" size="sm" onClick={handleCopy} disabled={busy}>
+          {copy.isPending ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Copy className="h-4 w-4" />
+          )}
         </Button>
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => regenerate.mutate(message.id)}
-          disabled={regenerate.isPending}
+          onClick={handleRegenerate}
+          disabled={busy}
         >
-          <RefreshCw className="h-4 w-4" />
+          {regenerate.isPending ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <RefreshCw className="h-4 w-4" />
+          )}
         </Button>
         <Button
           variant="ghost"
           size="sm"
-          disabled={pending || createConversation.isPending}
-          onClick={() =>
-            createConversation.mutate(message.id, {
-              onSuccess: (conversation) =>
-                router.push(`/dashboard/conversations/${conversation.id}`),
-              onError: (error) => toast.error(error.message),
-            })
-          }
+          disabled={pending || busy}
+          onClick={handleStartConversation}
         >
-          <MessageSquarePlus className="h-4 w-4" />
+          {createConversation.isPending ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <MessageSquarePlus className="h-4 w-4" />
+          )}
           Start conversation
         </Button>
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => remove.mutate(message.id)}
+          onClick={() => setConfirmDelete(true)}
+          disabled={busy}
           className="text-[var(--text-muted)] hover:text-[var(--state-error)]"
         >
-          <Trash2 className="h-4 w-4" />
+          {remove.isPending ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Trash2 className="h-4 w-4" />
+          )}
         </Button>
       </div>
+
+      <ConfirmDialog
+        open={confirmDelete}
+        onOpenChange={setConfirmDelete}
+        title="Delete message?"
+        description="This permanently removes the generated message and its history. This cannot be undone."
+        loading={remove.isPending}
+        onConfirm={handleDelete}
+      />
     </div>
   );
 }

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { ChevronRight, Loader2 } from "lucide-react";
+import { ChevronRight, Loader2, Plus, X } from "lucide-react";
 import { useCreateOffering } from "@/lib/hooks/use-offerings";
 import {
   Dialog,
@@ -50,6 +50,9 @@ const DETAIL_FIELDS = [
 
 type DetailKey = (typeof DETAIL_FIELDS)[number]["key"];
 
+/** Mirror of the API cap (MAX_SOURCE_URLS) so the UI stops adding rows past it. */
+const MAX_URLS = 5;
+
 /**
  * Offering creation. Name + URL + description stay visible for the fast
  * scrape-or-quick-capture path; the four deeper structured fields (audience,
@@ -64,7 +67,7 @@ export function OfferingCreateDialog({
 }: OfferingCreateDialogProps) {
   const create = useCreateOffering();
   const [name, setName] = useState("");
-  const [sourceUrl, setSourceUrl] = useState("");
+  const [urls, setUrls] = useState<string[]>([""]);
   const [description, setDescription] = useState("");
   const [details, setDetails] = useState<Record<DetailKey, string>>({
     targetAudience: "",
@@ -77,7 +80,7 @@ export function OfferingCreateDialog({
   useEffect(() => {
     if (!open) return;
     setName("");
-    setSourceUrl("");
+    setUrls([""]);
     setDescription("");
     setDetails({
       targetAudience: "",
@@ -92,12 +95,25 @@ export function OfferingCreateDialog({
     setDetails((prev) => ({ ...prev, [key]: value }));
   }
 
+  function setUrl(index: number, value: string) {
+    setUrls((prev) => prev.map((u, i) => (i === index ? value : u)));
+  }
+
+  function addUrlRow() {
+    setUrls((prev) => (prev.length >= MAX_URLS ? prev : [...prev, ""]));
+  }
+
+  function removeUrlRow(index: number) {
+    setUrls((prev) => prev.filter((_, i) => i !== index));
+  }
+
   function submit() {
     if (!name.trim()) return;
+    const sourceUrls = urls.map((u) => u.trim()).filter(Boolean);
     // Optimistic create + close immediately; the hook handles rollback/toast.
     create.mutate({
       name: name.trim(),
-      sourceUrl: sourceUrl.trim() || undefined,
+      sourceUrls: sourceUrls.length > 0 ? sourceUrls : undefined,
       description: description.trim() || undefined,
       targetAudience: details.targetAudience.trim() || undefined,
       problemSolved: details.problemSolved.trim() || undefined,
@@ -131,14 +147,47 @@ export function OfferingCreateDialog({
           </div>
 
           <div className="flex flex-col gap-2">
-            <Label htmlFor="offering-url">URL to scrape (optional)</Label>
-            <Input
-              id="offering-url"
-              type="url"
-              value={sourceUrl}
-              onChange={(e) => setSourceUrl(e.target.value)}
-              placeholder="https://…"
-            />
+            <Label htmlFor="offering-url-0">URLs to scrape (optional)</Label>
+            <p className="text-xs text-[var(--text-muted)]">
+              Add a site, plus product or pricing pages. Each is scraped and
+              combined into one offering.
+            </p>
+            <div className="flex flex-col gap-2">
+              {urls.map((url, index) => (
+                <div key={index} className="flex items-center gap-2">
+                  <Input
+                    id={`offering-url-${index}`}
+                    type="url"
+                    value={url}
+                    onChange={(e) => setUrl(index, e.target.value)}
+                    placeholder="https://…"
+                  />
+                  {urls.length > 1 ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => removeUrlRow(index)}
+                      aria-label="Remove URL"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+            {urls.length < MAX_URLS ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={addUrlRow}
+                className="w-fit text-[var(--text-secondary)]"
+              >
+                <Plus className="h-4 w-4" />
+                Add another URL
+              </Button>
+            ) : null}
           </div>
 
           <div className="flex flex-col gap-2">

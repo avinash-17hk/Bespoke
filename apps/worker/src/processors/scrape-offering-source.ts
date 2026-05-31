@@ -2,7 +2,6 @@ import type { Job } from "bullmq";
 import { eq } from "drizzle-orm";
 import { generateText, Output } from "ai";
 import type { LanguageModel } from "ai";
-import { z } from "zod";
 import { schema } from "@bespoke/db";
 import { compileOfferingContext } from "@bespoke/shared";
 import type { ScrapeOfferingSourcePayload } from "@bespoke/queue";
@@ -11,46 +10,54 @@ import { db } from "../lib/db";
 import { fetchSourceMarkdown } from "../lib/firecrawl";
 import { modelFor } from "../lib/ai";
 import { logger } from "../lib/logger";
+import { enqueueNextPendingSource } from "../lib/offering-chain";
+import {
+  buildCombinePrompt,
+  buildInitialExtractionPrompt,
+  offeringExtractionSchema,
+  type ExistingOfferingFields,
+  type OfferingExtraction,
+} from "../prompts/offering-extraction";
 
-/** Fields the LLM extracts from scraped page content. Null when not stated. */
-const extractionSchema = z.object({
-  description: z.string().nullable(),
-  summary: z.string().nullable(),
-  targetAudience: z.string().nullable(),
-  problemSolved: z.string().nullable(),
-  uniqueValueProp: z.string().nullable(),
-  proofPoints: z.string().nullable(),
-});
-
-type Extraction = z.infer<typeof extractionSchema>;
-
-async function extractOffering(
-  markdown: string,
+/** Run one offering extraction/combine call against the schema. */
+async function runExtraction(
+  prompt: string,
   model: LanguageModel,
-): Promise<Extraction> {
+): Promise<OfferingExtraction> {
   const { output } = await generateText({
     model,
-    output: Output.object({ schema: extractionSchema }),
-    prompt: [
-      "Extract a B2B sales offering from the website content below.",
-      "Be concise and factual. Use null for anything not clearly stated.",
-      "Do not invent claims.",
-      "For `summary`, write a 1-2 sentence plain-language overview of what",
-      "this offering is, written for a user skimming a list to recognize it.",
-      "",
-      markdown.slice(0, 12_000),
-    ].join("\n"),
-    // Extraction must be factual, not creative — keep it low.
-    temperature: 0.2,
+    output: Output.object({ schema: offeringExtractionSchema }),
+    prompt,
+    // Extraction and reconciliation are factual, not creative — keep it low.
+    temperature: 0.25,
   });
   return output;
 }
 
+/** True when the offering already carries structured content to merge into. */
+function hasStructuredContent(offering: ExistingOfferingFields): boolean {
+  return Boolean(
+    offering.description ||
+      offering.targetAudience ||
+      offering.problemSolved ||
+      offering.uniqueValueProp ||
+      offering.proofPoints,
+  );
+}
+
 /**
- * Scrape one offering source URL, extract structured offering fields with the
- * LLM, store raw + processed content, and fill any empty offering fields
- * (never overwriting what the user already wrote), then rebuild the offering's
- * compiled context. The Postgres scrape-job row is updated at every step.
+ * Scrape one offering source URL and fold it into the offering's structured
+ * fields with the LLM. Two modes:
+ *  - INITIAL (offering has no structured content yet): extract a fresh offering
+ *    from the page, then fill only empty fields so anything the user typed in
+ *    the create form still wins.
+ *  - COMBINE (offering already has content from an earlier scrape or the user):
+ *    reconcile the new source into the existing offering with the combine prompt
+ *    so multiple URLs produce one clean, categorized offering — not stapled
+ *    blocks. The merged result is authoritative and written back directly.
+ *
+ * Either way the compiled context is rebuilt from the clean structured fields.
+ * The Postgres scrape-job row is updated at every step.
  */
 export async function scrapeOfferingSource(
   job: Job<ScrapeOfferingSourcePayload>,
@@ -86,55 +93,89 @@ export async function scrapeOfferingSource(
     const modelSlug = settings?.generationModel || config.OPENROUTER_MODEL;
     const model = modelFor(modelSlug);
 
+    const [offering] = await db
+      .select()
+      .from(schema.offerings)
+      .where(eq(schema.offerings.id, offeringId));
+    if (!offering) throw new Error(`Offering ${offeringId} not found`);
+
     log.info("scraping url", { url: source.sourceUrl });
     const markdown = await fetchSourceMarkdown(source.sourceUrl);
+
+    // Pick the mode from the offering's current state. Content present (from an
+    // earlier scrape or the user's own typing) means we reconcile; otherwise we
+    // extract fresh.
+    const combining = hasStructuredContent(offering);
     log.info("scrape ok, extracting", {
       chars: markdown.length,
       model: modelSlug,
+      mode: combining ? "combine" : "initial",
     });
-    const extracted = await extractOffering(markdown, model);
+
+    const prompt = combining
+      ? buildCombinePrompt(offering, markdown)
+      : buildInitialExtractionPrompt(markdown);
+    const extracted = await runExtraction(prompt, model);
     log.info("extraction ok");
 
+    // Store the per-source extraction for audit (raw page + processed block).
     const processedContent = compileOfferingContext({ name: "", ...extracted });
     await db
       .update(schema.offeringSources)
       .set({ rawContent: markdown, processedContent })
       .where(eq(schema.offeringSources.id, sourceId));
 
-    const [offering] = await db
-      .select()
-      .from(schema.offerings)
-      .where(eq(schema.offerings.id, offeringId));
+    // INITIAL fills only empty fields (user-typed values win). COMBINE already
+    // reconciled against the existing offering, so its output wins — but a null
+    // from the model never erases content the offering already had.
+    const merged: ExistingOfferingFields = combining
+      ? {
+          name: offering.name,
+          description: extracted.description ?? offering.description,
+          summary: extracted.summary ?? offering.summary,
+          targetAudience: extracted.targetAudience ?? offering.targetAudience,
+          problemSolved: extracted.problemSolved ?? offering.problemSolved,
+          uniqueValueProp:
+            extracted.uniqueValueProp ?? offering.uniqueValueProp,
+          proofPoints: extracted.proofPoints ?? offering.proofPoints,
+        }
+      : {
+          name: offering.name,
+          description: offering.description ?? extracted.description,
+          summary: offering.summary ?? extracted.summary,
+          targetAudience: offering.targetAudience ?? extracted.targetAudience,
+          problemSolved: offering.problemSolved ?? extracted.problemSolved,
+          uniqueValueProp:
+            offering.uniqueValueProp ?? extracted.uniqueValueProp,
+          proofPoints: offering.proofPoints ?? extracted.proofPoints,
+        };
 
-    if (offering) {
-      // Fill only empty fields — user edits always win.
-      const merged = {
-        name: offering.name,
-        description: offering.description ?? extracted.description,
-        summary: offering.summary ?? extracted.summary,
-        targetAudience: offering.targetAudience ?? extracted.targetAudience,
-        problemSolved: offering.problemSolved ?? extracted.problemSolved,
-        uniqueValueProp: offering.uniqueValueProp ?? extracted.uniqueValueProp,
-        proofPoints: offering.proofPoints ?? extracted.proofPoints,
-      };
-      await db
-        .update(schema.offerings)
-        .set({
-          description: merged.description,
-          targetAudience: merged.targetAudience,
-          problemSolved: merged.problemSolved,
-          uniqueValueProp: merged.uniqueValueProp,
-          proofPoints: merged.proofPoints,
-          compiledContext: compileOfferingContext(merged),
-          status: "ready",
-        })
-        .where(eq(schema.offerings.id, offeringId));
-    }
+    await db
+      .update(schema.offerings)
+      .set({
+        description: merged.description,
+        summary: merged.summary,
+        targetAudience: merged.targetAudience,
+        problemSolved: merged.problemSolved,
+        uniqueValueProp: merged.uniqueValueProp,
+        proofPoints: merged.proofPoints,
+        compiledContext: compileOfferingContext(merged),
+      })
+      .where(eq(schema.offerings.id, offeringId));
 
     await db
       .update(schema.scrapeJobs)
       .set({ status: "completed", result: { extracted } })
       .where(jobFilter);
+
+    // Kick off the next queued source (if any). Stay `scraping` while more are
+    // pending so the UI keeps pulsing; flip to `ready` only when the chain ends.
+    const moreWork = await enqueueNextPendingSource(offeringId);
+    await db
+      .update(schema.offerings)
+      .set({ status: moreWork ? "scraping" : "ready" })
+      .where(eq(schema.offerings.id, offeringId));
+    log.info("source merged", { moreWork });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     log.error("scrape-offering-source failed", { error: message });
@@ -142,17 +183,21 @@ export async function scrapeOfferingSource(
       .update(schema.scrapeJobs)
       .set({ status: "failed", error: message })
       .where(jobFilter);
-    // Don't strand the offering in `scraping` — fall back to ready when it
-    // already has user-entered context, otherwise draft.
-    const [stalled] = await db
-      .select()
-      .from(schema.offerings)
-      .where(eq(schema.offerings.id, offeringId));
-    if (stalled?.status === "scraping") {
-      await db
-        .update(schema.offerings)
-        .set({ status: stalled.compiledContext ? "ready" : "draft" })
+    // One bad URL must not strand the rest of the chain — try the next source.
+    const moreWork = await enqueueNextPendingSource(offeringId);
+    if (!moreWork) {
+      // Nothing left: don't leave the offering stuck in `scraping`. Fall back to
+      // ready when it has context, otherwise draft.
+      const [stalled] = await db
+        .select()
+        .from(schema.offerings)
         .where(eq(schema.offerings.id, offeringId));
+      if (stalled?.status === "scraping") {
+        await db
+          .update(schema.offerings)
+          .set({ status: stalled.compiledContext ? "ready" : "draft" })
+          .where(eq(schema.offerings.id, offeringId));
+      }
     }
     throw error;
   }
