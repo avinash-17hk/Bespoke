@@ -30,7 +30,7 @@ pnpm-debug.log*
 .idea/
 
 # uploads (local dev file storage)
-uploads/
+/uploads/
 
 # drizzle
 drizzle/meta/_journal.json.bak
