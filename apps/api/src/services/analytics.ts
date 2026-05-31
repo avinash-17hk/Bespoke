@@ -137,20 +137,17 @@ export async function getDashboard(userId: string): Promise<DashboardData> {
       .select({
         messageId: schema.generatedMessages.id,
         content: schema.generatedMessages.content,
-        rating: schema.messageRatings.rating,
+        rating: schema.generatedMessages.rating,
       })
-      .from(schema.messageRatings)
-      .innerJoin(
-        schema.generatedMessages,
-        eq(schema.messageRatings.messageId, schema.generatedMessages.id),
-      )
+      .from(schema.generatedMessages)
       .innerJoin(
         schema.aiGenerations,
         eq(schema.generatedMessages.generationId, schema.aiGenerations.id),
       )
-      .where(eq(schema.aiGenerations.userId, userId))
-      .orderBy(desc(schema.messageRatings.rating))
-      .limit(5),
+      .where(and(eq(schema.aiGenerations.userId, userId), isNotNull(schema.generatedMessages.rating)))
+      .orderBy(desc(schema.generatedMessages.rating))
+      .limit(5)
+      .then((rows) => rows as TopRatedMessage[]),
 
     // Generation volume per day over the last 14 days.
     db

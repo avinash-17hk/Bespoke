@@ -105,7 +105,7 @@ export default function ProspectDetailPage() {
   }
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-6 pb-10">
       <Link
         href="/dashboard/prospects"
         className="inline-flex w-fit items-center gap-1.5 text-sm text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
@@ -313,9 +313,9 @@ export default function ProspectDetailPage() {
                 <h2 className="text-sm font-medium text-[var(--text-primary)]">
                   Consolidated context
                 </h2>
-                {prospect.data.context?.mergedContext ? (
+                {prospect.data.mergedContext ? (
                   <pre className="whitespace-pre-wrap rounded-md bg-[var(--bg-base)] p-4 font-mono text-xs leading-relaxed text-[var(--text-secondary)]">
-                    {prospect.data.context.mergedContext}
+                    {prospect.data.mergedContext}
                   </pre>
                 ) : prospect.data.scraping ? (
                   <p className="flex items-center gap-1.5 rounded-md bg-[var(--bg-base)] p-4 text-xs text-[var(--text-muted)]">

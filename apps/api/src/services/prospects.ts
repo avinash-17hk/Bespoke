@@ -1,9 +1,8 @@
-import { and, desc, eq, ilike, inArray, or } from "drizzle-orm";
+import { and, desc, eq, ilike, inArray, isNotNull, or } from "drizzle-orm";
 import {
   schema,
   type Prospect,
   type ProspectAsset,
-  type ProspectContext,
 } from "@bespoke/db";
 import { JOB_NAME, QUEUE_NAME, enqueueJob } from "@bespoke/queue";
 import type {
@@ -34,7 +33,6 @@ export type UpdateProspectInput = Partial<Omit<CreateProspectInput, "assets">>;
 
 export interface ProspectWithDetails extends Prospect {
   assets: ProspectAsset[];
-  context: ProspectContext | null;
   /** True while any asset is still being scraped or before context is built. */
   scraping: boolean;
 }
@@ -76,11 +74,11 @@ async function scrapingFlags(
     .from(schema.prospectAssets)
     .where(inArray(schema.prospectAssets.prospectId, prospectIds));
 
-  const contexts = await db
-    .select({ prospectId: schema.prospectContext.prospectId })
-    .from(schema.prospectContext)
-    .where(inArray(schema.prospectContext.prospectId, prospectIds));
-  const hasContext = new Set(contexts.map((c) => c.prospectId));
+  const prospectsWithCtx = await db
+    .select({ id: schema.prospects.id })
+    .from(schema.prospects)
+    .where(and(inArray(schema.prospects.id, prospectIds), isNotNull(schema.prospects.mergedContext)));
+  const hasContext = new Set(prospectsWithCtx.map((p) => p.id));
 
   const byProspect = new Map<string, ProspectAsset["status"][]>();
   for (const asset of assets) {
@@ -215,17 +213,12 @@ export async function getProspect(
     .where(eq(schema.prospectAssets.prospectId, id))
     .orderBy(desc(schema.prospectAssets.createdAt));
 
-  const [context] = await db
-    .select()
-    .from(schema.prospectContext)
-    .where(eq(schema.prospectContext.prospectId, id));
-
   const scraping = deriveScraping(
     assets.map((a) => a.status),
-    Boolean(context),
+    Boolean(prospect.mergedContext),
   );
 
-  return { ...prospect, assets, context: context ?? null, scraping };
+  return { ...prospect, assets, scraping };
 }
 
 export async function createProspect(

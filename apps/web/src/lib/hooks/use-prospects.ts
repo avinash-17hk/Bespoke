@@ -8,7 +8,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { toast } from "sonner";
-import type { Prospect, ProspectAsset, ProspectContext } from "@bespoke/db";
+import type { Prospect, ProspectAsset } from "@bespoke/db";
 import type { CursorPage, ProspectAssetType } from "@bespoke/shared";
 import { apiClient } from "../api-client";
 import { isOptimisticId } from "../format";
@@ -24,7 +24,6 @@ import {
 
 export type ProspectWithDetails = Prospect & {
   assets: ProspectAsset[];
-  context: ProspectContext | null;
   /** True while any asset is still scraping or before context is built. */
   scraping: boolean;
 };

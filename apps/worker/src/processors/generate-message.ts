@@ -72,9 +72,9 @@ export async function generateMessage(
       : [];
     const [context] = generation.prospectId
       ? await db
-          .select()
-          .from(schema.prospectContext)
-          .where(eq(schema.prospectContext.prospectId, generation.prospectId))
+          .select({ mergedContext: schema.prospects.mergedContext })
+          .from(schema.prospects)
+          .where(eq(schema.prospects.id, generation.prospectId))
       : [];
 
     if (!offering || !prompt || !context?.mergedContext) {

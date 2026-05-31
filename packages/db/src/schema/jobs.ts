@@ -36,6 +36,8 @@ export const scrapeJobs = pgTable(
   (table) => [
     index("scrape_jobs_user_id_idx").on(table.userId),
     index("scrape_jobs_bullmq_job_id_idx").on(table.bullmqJobId),
+    index("scrape_jobs_prospect_id_idx").on(table.prospectId),
+    index("scrape_jobs_offering_id_idx").on(table.offeringId),
   ],
 );
 

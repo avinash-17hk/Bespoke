@@ -8,10 +8,8 @@ import {
 import type { AiGeneration, GeneratedMessage } from "@bespoke/db";
 import { apiClient } from "../api-client";
 
-/** A generated message plus its rating and parent-generation metadata. */
+/** A generated message plus its parent-generation metadata. */
 export interface MessageView extends GeneratedMessage {
-  rating: number | null;
-  feedback: string | null;
   generationStatus: AiGeneration["status"];
   model: string;
 }

@@ -46,6 +46,7 @@ export const aiGenerations = pgTable(
   (table) => [
     index("ai_generations_user_id_idx").on(table.userId),
     index("ai_generations_prospect_id_idx").on(table.prospectId),
+    index("ai_generations_offering_id_idx").on(table.offeringId),
   ],
 );
 
@@ -67,6 +68,8 @@ export const generatedMessages = pgTable(
     content: text("content").notNull(),
     isFavorite: boolean("is_favorite").notNull().default(false),
     copiedCount: integer("copied_count").notNull().default(0),
+    rating: integer("rating"),
+    feedback: text("feedback"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => [
@@ -75,14 +78,3 @@ export const generatedMessages = pgTable(
   ],
 );
 
-/** A 1–5 rating on a generated message. One rating per message. */
-export const messageRatings = pgTable("message_ratings", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  messageId: uuid("message_id")
-    .notNull()
-    .unique()
-    .references(() => generatedMessages.id, { onDelete: "cascade" }),
-  rating: integer("rating").notNull(),
-  feedback: text("feedback"),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-});

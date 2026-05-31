@@ -48,12 +48,9 @@ export async function consolidateInsights(
     })));
 
     await db
-      .insert(schema.prospectContext)
-      .values({ prospectId, mergedContext, lastUpdatedAt: new Date() })
-      .onConflictDoUpdate({
-        target: schema.prospectContext.prospectId,
-        set: { mergedContext, lastUpdatedAt: new Date() },
-      });
+      .update(schema.prospects)
+      .set({ mergedContext, contextUpdatedAt: new Date() })
+      .where(eq(schema.prospects.id, prospectId));
     log.info("prospect context updated");
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

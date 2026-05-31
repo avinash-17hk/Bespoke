@@ -17,8 +17,6 @@ export interface CreateGenerationInput {
 
 /** A generated message with its rating and parent-generation metadata. */
 export interface MessageView extends GeneratedMessage {
-  rating: number | null;
-  feedback: string | null;
   generationStatus: AiGeneration["status"];
   model: string;
 }
@@ -59,7 +57,7 @@ export async function createGeneration(
       ),
     );
   const [prospect] = await db
-    .select({ id: schema.prospects.id })
+    .select({ id: schema.prospects.id, mergedContext: schema.prospects.mergedContext })
     .from(schema.prospects)
     .where(
       and(
@@ -68,12 +66,7 @@ export async function createGeneration(
       ),
     );
   if (!offering || !prompt || !prospect) return { status: "not_found" };
-
-  const [context] = await db
-    .select()
-    .from(schema.prospectContext)
-    .where(eq(schema.prospectContext.prospectId, input.prospectId));
-  if (!context?.mergedContext) return { status: "no_context" };
+  if (!prospect.mergedContext) return { status: "no_context" };
 
   const { generationModel } = await getSettings(userId);
 
@@ -149,17 +142,11 @@ export async function listMessages(
       message: schema.generatedMessages,
       status: schema.aiGenerations.status,
       model: schema.aiGenerations.model,
-      rating: schema.messageRatings.rating,
-      feedback: schema.messageRatings.feedback,
     })
     .from(schema.generatedMessages)
     .innerJoin(
       schema.aiGenerations,
       eq(schema.generatedMessages.generationId, schema.aiGenerations.id),
-    )
-    .leftJoin(
-      schema.messageRatings,
-      eq(schema.messageRatings.messageId, schema.generatedMessages.id),
     )
     .where(
       and(
@@ -171,8 +158,6 @@ export async function listMessages(
 
   return rows.map((row) => ({
     ...row.message,
-    rating: row.rating,
-    feedback: row.feedback,
     generationStatus: row.status,
     model: row.model,
   }));
@@ -209,12 +194,9 @@ export async function rateMessage(
   if (!message) return false;
 
   await db
-    .insert(schema.messageRatings)
-    .values({ messageId, rating, feedback })
-    .onConflictDoUpdate({
-      target: schema.messageRatings.messageId,
-      set: { rating, feedback },
-    });
+    .update(schema.generatedMessages)
+    .set({ rating, feedback })
+    .where(eq(schema.generatedMessages.id, messageId));
 
   await db.insert(schema.analyticsEvents).values({
     userId,

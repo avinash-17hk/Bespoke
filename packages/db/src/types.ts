@@ -10,12 +10,10 @@ import type {
   prospects,
   prospectAssets,
   prospectInsights,
-  prospectContext,
   conversations,
   conversationMessages,
   aiGenerations,
   generatedMessages,
-  messageRatings,
   scrapeJobs,
   generationJobs,
   analyticsEvents,
@@ -40,9 +38,6 @@ export type NewProspectAsset = typeof prospectAssets.$inferInsert;
 export type ProspectInsight = typeof prospectInsights.$inferSelect;
 export type NewProspectInsight = typeof prospectInsights.$inferInsert;
 
-export type ProspectContext = typeof prospectContext.$inferSelect;
-export type NewProspectContext = typeof prospectContext.$inferInsert;
-
 export type Conversation = typeof conversations.$inferSelect;
 export type NewConversation = typeof conversations.$inferInsert;
 
@@ -54,9 +49,6 @@ export type NewAiGeneration = typeof aiGenerations.$inferInsert;
 
 export type GeneratedMessage = typeof generatedMessages.$inferSelect;
 export type NewGeneratedMessage = typeof generatedMessages.$inferInsert;
-
-export type MessageRating = typeof messageRatings.$inferSelect;
-export type NewMessageRating = typeof messageRatings.$inferInsert;
 
 export type ScrapeJob = typeof scrapeJobs.$inferSelect;
 export type NewScrapeJob = typeof scrapeJobs.$inferInsert;

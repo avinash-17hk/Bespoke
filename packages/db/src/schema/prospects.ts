@@ -24,6 +24,8 @@ export const prospects = pgTable(
     jobTitle: text("job_title"),
     companyName: text("company_name"),
     notes: text("notes"),
+    mergedContext: text("merged_context"),
+    contextUpdatedAt: timestamp("context_updated_at"),
     ...timestamps,
   },
   (table) => [index("prospects_user_id_idx").on(table.userId)],
@@ -51,10 +53,7 @@ export const prospectAssets = pgTable(
   (table) => [index("prospect_assets_prospect_id_idx").on(table.prospectId)],
 );
 
-/**
- * Per-asset extracted insight. Many insights per prospect are later merged
- * into the single `prospectContext` row.
- */
+/** Per-asset extracted insight. Many insights per prospect are merged into `prospects.merged_context`. */
 export const prospectInsights = pgTable(
   "prospect_insights",
   {
@@ -72,16 +71,3 @@ export const prospectInsights = pgTable(
   (table) => [index("prospect_insights_prospect_id_idx").on(table.prospectId)],
 );
 
-/**
- * Derived, consolidated context for a prospect — rebuilt by the
- * `consolidate-insights` job, never hand-edited. One row per prospect.
- */
-export const prospectContext = pgTable("prospect_context", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  prospectId: uuid("prospect_id")
-    .notNull()
-    .unique()
-    .references(() => prospects.id, { onDelete: "cascade" }),
-  mergedContext: text("merged_context"),
-  lastUpdatedAt: timestamp("last_updated_at").defaultNow().notNull(),
-});

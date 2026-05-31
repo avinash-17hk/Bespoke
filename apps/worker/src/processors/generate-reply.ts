@@ -71,9 +71,9 @@ export async function generateReply(
       : [];
     const [context] = generation.prospectId
       ? await db
-          .select()
-          .from(schema.prospectContext)
-          .where(eq(schema.prospectContext.prospectId, generation.prospectId))
+          .select({ mergedContext: schema.prospects.mergedContext })
+          .from(schema.prospects)
+          .where(eq(schema.prospects.id, generation.prospectId))
       : [];
 
     const thread = await db
