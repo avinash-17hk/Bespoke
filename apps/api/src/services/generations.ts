@@ -112,7 +112,7 @@ export async function createGeneration(
 export async function getGeneration(
   userId: string,
   generationId: string,
-): Promise<(AiGeneration & { message: GeneratedMessage | null }) | null> {
+): Promise<(AiGeneration & { message: GeneratedMessage | null; failureReason: string | null }) | null> {
   const [generation] = await db
     .select()
     .from(schema.aiGenerations)
@@ -129,7 +129,12 @@ export async function getGeneration(
     .from(schema.generatedMessages)
     .where(eq(schema.generatedMessages.generationId, generationId));
 
-  return { ...generation, message: message ?? null };
+  const [jobRow] = await db
+    .select({ error: schema.generationJobs.error })
+    .from(schema.generationJobs)
+    .where(eq(schema.generationJobs.generationId, generationId));
+
+  return { ...generation, message: message ?? null, failureReason: jobRow?.error ?? null };
 }
 
 /** All generated messages for a prospect, newest first — the history list. */

@@ -266,16 +266,23 @@ export default function ProspectDetailPage() {
                         key={asset.id}
                         className="flex items-center justify-between gap-2 rounded-md border border-[var(--border-default)] px-3 py-2 text-xs"
                       >
-                        <span className="flex min-w-0 items-center gap-1.5 truncate text-[var(--text-secondary)]">
-                          {asset.status === "processing" ? (
-                            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[var(--state-warning)]" />
-                          ) : asset.status === "pending" ? (
-                            <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-[var(--accent-primary)]" />
-                          ) : null}
-                          <span className="truncate">
-                            {asset.assetType.replace(/_/g, " ")}
-                            {asset.url ? ` · ${asset.url}` : ""}
+                        <span className="flex min-w-0 flex-col gap-0.5">
+                          <span className="flex items-center gap-1.5 truncate text-[var(--text-secondary)]">
+                            {asset.status === "processing" ? (
+                              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[var(--state-warning)]" />
+                            ) : asset.status === "pending" ? (
+                              <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-[var(--accent-primary)]" />
+                            ) : null}
+                            <span className="truncate">
+                              {asset.assetType.replace(/_/g, " ")}
+                              {asset.url ? ` · ${asset.url}` : ""}
+                            </span>
                           </span>
+                          {asset.status === "failed" && asset.failureReason ? (
+                            <span className="truncate text-[var(--state-error)]">
+                              {asset.failureReason}
+                            </span>
+                          ) : null}
                         </span>
                         <span className="flex shrink-0 items-center gap-2">
                           {asset.status === "failed" &&

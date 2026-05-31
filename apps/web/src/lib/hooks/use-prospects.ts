@@ -22,8 +22,13 @@ import {
   type ListSnapshot,
 } from "./_list-cache";
 
+export type ProspectAssetWithFailure = ProspectAsset & {
+  /** Error from the scrape worker — only set when status is "failed". */
+  failureReason: string | null;
+};
+
 export type ProspectWithDetails = Prospect & {
-  assets: ProspectAsset[];
+  assets: ProspectAssetWithFailure[];
   /** True while any asset is still scraping or before context is built. */
   scraping: boolean;
 };
@@ -107,6 +112,8 @@ export function useWatchProspectScrape(prospect: ProspectListItem) {
   const queryClient = useQueryClient();
   const watching = prospect.scraping && !isOptimisticId(prospect.id);
   const wasScraping = useRef(prospect.scraping);
+  // null = not yet initialized; Map = asset id → last known status
+  const prevAssetStatuses = useRef<Map<string, string> | null>(null);
 
   const { data } = useQuery({
     queryKey: prospectKeys.detail(prospect.id),
@@ -118,8 +125,27 @@ export function useWatchProspectScrape(prospect: ProspectListItem) {
 
   useEffect(() => {
     if (!data) return;
+
+    // Detect assets that transitioned to failed since the last poll.
+    if (prevAssetStatuses.current !== null) {
+      for (const asset of data.assets) {
+        const prev = prevAssetStatuses.current.get(asset.id);
+        if (
+          (prev === "pending" || prev === "processing") &&
+          asset.status === "failed"
+        ) {
+          toast.error(asset.failureReason ?? "Asset scraping failed", {
+            description: asset.url ?? asset.assetType.replace(/_/g, " "),
+          });
+        }
+      }
+    }
+    prevAssetStatuses.current = new Map(
+      data.assets.map((a) => [a.id, a.status]),
+    );
+
     if (wasScraping.current && !data.scraping) {
-      toast.success(`“${data.name}” is ready`);
+      toast.success(`"${data.name}" is ready`);
       void queryClient.invalidateQueries({ queryKey: prospectKeys.lists });
     }
     wasScraping.current = data.scraping;

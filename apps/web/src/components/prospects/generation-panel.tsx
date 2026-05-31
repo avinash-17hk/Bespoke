@@ -24,6 +24,7 @@ import {
   useMessages,
   useRateMessage,
   useRegenerateMessage,
+  useWatchGeneration,
   type MessageView,
 } from "@/lib/hooks/use-generations";
 import {
@@ -53,13 +54,20 @@ export function GenerationPanel({ prospectId }: { prospectId: string }) {
 
   const [offering, setOffering] = useState<PickerOption | null>(null);
   const [prompt, setPrompt] = useState<PickerOption | null>(null);
+  const [watchGenerationId, setWatchGenerationId] = useState<string | null>(
+    null,
+  );
+  useWatchGeneration(watchGenerationId);
 
   function generate() {
     if (!offering || !prompt) return;
     createGeneration.mutate(
       { offeringId: offering.id, promptId: prompt.id, prospectId },
       {
-        onSuccess: () => toast.success("Generating message…"),
+        onSuccess: (generation) => {
+          toast.success("Generating message…");
+          setWatchGenerationId(generation.id);
+        },
         onError: (error) => toast.error(error.message),
       },
     );

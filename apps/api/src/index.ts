@@ -5,6 +5,7 @@ import {
   validatorCompiler,
 } from "fastify-type-provider-zod";
 import { config } from "./config";
+import { AppError } from "./lib/errors";
 import { corsPlugin } from "./plugins/cors";
 import { authPlugin, requireAuth } from "./plugins/auth";
 import { offeringRoutes } from "./routes/offerings/index";
@@ -34,14 +35,26 @@ async function main(): Promise<void> {
   // Map validation and unexpected errors to the standard { error, code } shape.
   app.setErrorHandler((error: FastifyError, request, reply) => {
     if (hasZodFastifySchemaValidationErrors(error)) {
-      return reply
-        .status(400)
-        .send({ error: "Invalid request", code: "VALIDATION_ERROR" });
+      return reply.status(400).send({
+        error: "Invalid request",
+        code: "VALIDATION_ERROR",
+        issues: error.validation.map((issue) => ({
+          path: issue.instancePath.replace(/^\//, "").replace(/\//g, "."),
+          message: issue.message ?? "Invalid value",
+        })),
+      });
+    }
+    if (error instanceof AppError) {
+      return reply.status(error.statusCode).send({
+        error: error.message,
+        code: error.code,
+        ...(error.details ? { details: error.details } : {}),
+      });
     }
     request.log.error({ error }, "Unhandled error");
     const status = error.statusCode ?? 500;
     return reply.status(status).send({
-      error: status >= 500 ? "Internal server error" : error.message,
+      error: error.message ?? "Internal server error",
       code: error.code ?? "INTERNAL_ERROR",
     });
   });

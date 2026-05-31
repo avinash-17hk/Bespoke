@@ -1,5 +1,6 @@
 import { generateText } from "ai";
 import { decryptSecret } from "../lib/crypto";
+import { AppError } from "../lib/errors";
 import { resolveModel } from "../lib/resolve-model";
 import { getSettingsRow } from "./settings";
 
@@ -51,12 +52,16 @@ export async function explain(
     : null;
   const model = resolveModel(row?.generationModel, userKey);
 
-  const { text } = await generateText({
-    model,
-    system,
-    prompt: user,
-    temperature: 0.5,
-  });
-
-  return text.trim();
+  try {
+    const { text } = await generateText({
+      model,
+      system,
+      prompt: user,
+      temperature: 0.5,
+    });
+    return text.trim();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "AI request failed";
+    throw new AppError(502, "AI_GENERATION_FAILED", message);
+  }
 }

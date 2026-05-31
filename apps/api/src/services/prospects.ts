@@ -1,4 +1,4 @@
-import { and, desc, eq, ilike, inArray, isNotNull, or } from "drizzle-orm";
+import { and, desc, eq, ilike, inArray, isNotNull, or, sql } from "drizzle-orm";
 import {
   schema,
   type Prospect,
@@ -31,8 +31,13 @@ export interface CreateProspectInput {
 
 export type UpdateProspectInput = Partial<Omit<CreateProspectInput, "assets">>;
 
+export interface ProspectAssetWithFailure extends ProspectAsset {
+  /** Error from the scrape worker — only set when status is "failed". */
+  failureReason: string | null;
+}
+
 export interface ProspectWithDetails extends Prospect {
-  assets: ProspectAsset[];
+  assets: ProspectAssetWithFailure[];
   /** True while any asset is still being scraped or before context is built. */
   scraping: boolean;
 }
@@ -213,12 +218,45 @@ export async function getProspect(
     .where(eq(schema.prospectAssets.prospectId, id))
     .orderBy(desc(schema.prospectAssets.createdAt));
 
+  // Load worker failure messages for any failed assets from scrape_jobs.
+  // The assetId is stored in the scrape_jobs.input jsonb field.
+  const failureByAsset = new Map<string, string>();
+  const hasFailed = assets.some((a) => a.status === "failed");
+  if (hasFailed) {
+    const failedJobs = await db
+      .select({
+        assetId: sql<string>`${schema.scrapeJobs.input}->>'assetId'`,
+        error: schema.scrapeJobs.error,
+      })
+      .from(schema.scrapeJobs)
+      .where(
+        and(
+          eq(schema.scrapeJobs.prospectId, id),
+          eq(schema.scrapeJobs.status, "failed"),
+        ),
+      )
+      .orderBy(desc(schema.scrapeJobs.createdAt));
+
+    for (const job of failedJobs) {
+      if (job.assetId && job.error && !failureByAsset.has(job.assetId)) {
+        failureByAsset.set(job.assetId, job.error);
+      }
+    }
+  }
+
   const scraping = deriveScraping(
     assets.map((a) => a.status),
     Boolean(prospect.mergedContext),
   );
 
-  return { ...prospect, assets, scraping };
+  return {
+    ...prospect,
+    assets: assets.map((a) => ({
+      ...a,
+      failureReason: a.status === "failed" ? (failureByAsset.get(a.id) ?? null) : null,
+    })),
+    scraping,
+  };
 }
 
 export async function createProspect(
