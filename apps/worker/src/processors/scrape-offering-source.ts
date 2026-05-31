@@ -5,10 +5,10 @@ import type { LanguageModel } from "ai";
 import { schema } from "@bespoke/db";
 import { compileOfferingContext } from "@bespoke/shared";
 import type { ScrapeOfferingSourcePayload } from "@bespoke/queue";
-import { config } from "../config";
 import { db } from "../lib/db";
 import { fetchSourceMarkdown } from "../lib/firecrawl";
-import { modelFor } from "../lib/ai";
+import { decryptSecret } from "../lib/crypto";
+import { resolveModel } from "../lib/resolve-model";
 import { logger } from "../lib/logger";
 import { enqueueNextPendingSource } from "../lib/offering-chain";
 import {
@@ -90,8 +90,13 @@ export async function scrapeOfferingSource(
       .select()
       .from(schema.userSettings)
       .where(eq(schema.userSettings.userId, userId));
-    const modelSlug = settings?.generationModel || config.OPENROUTER_MODEL;
-    const model = modelFor(modelSlug);
+    const userKey = settings?.openrouterApiKeyEncrypted
+      ? decryptSecret(settings.openrouterApiKeyEncrypted)
+      : null;
+    const { model, slug: modelSlug, usingUserKey } = resolveModel(
+      settings?.generationModel,
+      userKey,
+    );
 
     const [offering] = await db
       .select()
@@ -109,6 +114,7 @@ export async function scrapeOfferingSource(
     log.info("scrape ok, extracting", {
       chars: markdown.length,
       model: modelSlug,
+      userKey: usingUserKey,
       mode: combining ? "combine" : "initial",
     });
 

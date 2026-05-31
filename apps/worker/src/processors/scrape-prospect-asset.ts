@@ -7,11 +7,11 @@ import {
   enqueueJob,
   type ScrapeProspectAssetPayload,
 } from "@bespoke/queue";
-import { config } from "../config";
 import { db } from "../lib/db";
 import { fetchSourceMarkdown } from "../lib/firecrawl";
 import { deliveryUrl } from "../lib/cloudinary";
-import { modelFor } from "../lib/ai";
+import { decryptSecret } from "../lib/crypto";
+import { resolveModel } from "../lib/resolve-model";
 import { queues } from "../lib/queue";
 import { logger } from "../lib/logger";
 import {
@@ -137,12 +137,18 @@ export async function scrapeProspectAsset(
       .select()
       .from(schema.userSettings)
       .where(eq(schema.userSettings.userId, userId));
-    const modelSlug = settings?.generationModel || config.OPENROUTER_MODEL;
-    const model = modelFor(modelSlug);
+    const userKey = settings?.openrouterApiKeyEncrypted
+      ? decryptSecret(settings.openrouterApiKeyEncrypted)
+      : null;
+    const { model, slug: modelSlug, usingUserKey } = resolveModel(
+      settings?.generationModel,
+      userKey,
+    );
 
     log.info("extracting asset", {
       assetType: asset.assetType,
       model: modelSlug,
+      userKey: usingUserKey,
     });
     const insight = await extractAsset(asset, model);
     log.info("asset extracted", { hasInsight: insight !== null });

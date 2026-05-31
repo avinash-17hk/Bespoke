@@ -1,7 +1,7 @@
 import { generateText } from "ai";
-import { config } from "../config";
-import { modelFor, modelForUser } from "../lib/ai";
-import { getSettings, getUserOpenRouterKey } from "./settings";
+import { decryptSecret } from "../lib/crypto";
+import { resolveModel } from "../lib/resolve-model";
+import { getSettingsRow } from "./settings";
 
 /** Subjects the inline explainer can speak to. */
 export type ExplainTopic = "offering" | "prompt";
@@ -42,12 +42,17 @@ export async function explain(
     ? `Here is the user's current ${topic} draft:\n\n"""\n${trimmed}\n"""\n\nReview it. In two or three short sentences, say what is strong and what concrete detail to add to make generated messages better. Be specific to this draft.`
     : `Explain what a good ${topic} is and one practical tip for writing one, so a first-time user knows what to put here.`;
 
-  const { generationModel } = await getSettings(userId);
-  const modelSlug = generationModel || config.OPENROUTER_MODEL;
-  const userKey = await getUserOpenRouterKey(userId);
+  // One settings read serves both the model slug and the user's key; the
+  // downgrade-when-no-key rule lives in resolveModel, so the stored slug can be
+  // passed straight through.
+  const row = await getSettingsRow(userId);
+  const userKey = row?.openrouterApiKeyEncrypted
+    ? decryptSecret(row.openrouterApiKeyEncrypted)
+    : null;
+  const model = resolveModel(row?.generationModel, userKey);
 
   const { text } = await generateText({
-    model: userKey ? modelForUser(modelSlug, userKey) : modelFor(modelSlug),
+    model,
     system,
     prompt: user,
     temperature: 0.5,
