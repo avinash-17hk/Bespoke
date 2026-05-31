@@ -25,8 +25,10 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
 
         <div className="relative z-10 flex min-w-0 flex-1 flex-col">
           <MobileTopBar />
-          <SmoothScroll className="flex-1">
-            <div className="mx-auto w-full max-w-6xl p-4 sm:p-6">{children}</div>
+          <SmoothScroll className="flex min-h-0 flex-1 flex-col">
+            <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col p-4 sm:min-h-full sm:p-6">
+              {children}
+            </div>
           </SmoothScroll>
         </div>
       </div>

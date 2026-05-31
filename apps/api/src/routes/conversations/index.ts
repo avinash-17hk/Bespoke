@@ -34,6 +34,13 @@ export async function conversationRoutes(
   );
 
   app.get(
+    "/start-candidates",
+    async (request) => ({
+      data: await conversationsService.listStartCandidates(request.userId),
+    }),
+  );
+
+  app.get(
     "/:id",
     { schema: { params: conversationIdParams } },
     async (request, reply) => {

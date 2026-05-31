@@ -20,7 +20,11 @@ export function ChatThread({
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+    bottomRef.current?.scrollIntoView({
+      block: "end",
+      behavior: "smooth",
+      inline: "nearest",
+    });
   }, [messages.length, awaitingReply]);
 
   return (

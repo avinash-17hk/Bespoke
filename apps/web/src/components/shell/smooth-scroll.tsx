@@ -20,7 +20,9 @@ export function SmoothScroll({ children, className }: SmoothScrollProps) {
 
   if (reducedMotion) {
     return (
-      <main className={`min-h-0 overflow-y-auto ${className ?? ""}`}>
+      <main
+        className={`dashboard-scroll min-h-0 overflow-y-auto ${className ?? ""}`}
+      >
         {children}
       </main>
     );
@@ -28,7 +30,7 @@ export function SmoothScroll({ children, className }: SmoothScrollProps) {
 
   return (
     <ReactLenis
-      className={`min-h-0 overflow-y-auto ${className ?? ""}`}
+      className={`dashboard-scroll min-h-0 overflow-y-auto ${className ?? ""}`}
       options={{ lerp: 0.12, smoothWheel: true, wheelMultiplier: 1 }}
     >
       {children}

@@ -1,14 +1,16 @@
 import type { BuilderField, BuilderState } from "./types";
 
 /**
- * The structured builder fields. This array is the single source of truth: the
- * form renders directly from it and the generator reads selected option lines
- * back out of it, so adding a new field or option is a pure data change.
+ * Structured builder fields — single source of truth for the form and prompt
+ * generator. Each field's `section` controls where its chosen lines land:
  *
- * `section` decides where a field's chosen lines land in the generated prompt:
- *   - intro     -> the opening directive (one select field expected)
- *   - guideline -> a "Follow these guidelines" bullet
- *   - avoid     -> an "Avoid the following" bullet
+ *   intro     -> opening directive (one select field)
+ *   guideline -> "Follow these guidelines" bullet
+ *   avoid     -> "Avoid the following" bullet
+ *
+ * IMPORTANT: the base system prompt enforces non-negotiable rules (hook
+ * quality, factuality, no em dashes, soft close). Builder fields must only
+ * add genuinely new instructions — never restate the base rules.
  */
 export const BUILDER_FIELDS: BuilderField[] = [
   {
@@ -27,22 +29,22 @@ export const BUILDER_FIELDS: BuilderField[] = [
       {
         value: "linkedin",
         label: "LinkedIn outreach",
-        line: "a short LinkedIn note that feels personal rather than promotional",
+        line: "a short LinkedIn note (under 60 words) that feels personal rather than promotional — LinkedIn rewards brevity more than email does",
       },
       {
         value: "follow_up",
         label: "Follow up message",
-        line: "a polite follow up that adds one useful new angle and stays grounded in the prospect's context",
+        line: "a follow up to a message that got no reply — shorter than the original, adds one new angle or piece of proof, and acknowledges the prospect is busy without over-apologizing",
       },
       {
         value: "partnership",
         label: "Partnership request",
-        line: "a partnership message that opens with a specific reason the two sides fit and proposes shared upside",
+        line: "a partnership message that opens with a specific reason the two sides fit and proposes shared upside, not one-sided pitch",
       },
       {
         value: "reengagement",
         label: "Customer re-engagement",
-        line: "a re-engagement message that uses a relevant prospect-specific reason to revive a quiet conversation",
+        line: "a re-engagement message that references the prior relationship naturally and gives a fresh, context-supported reason to reconnect now",
       },
       {
         value: "general",
@@ -61,28 +63,32 @@ export const BUILDER_FIELDS: BuilderField[] = [
       {
         value: "friendly",
         label: "Friendly",
-        line: "Keep the tone friendly and approachable.",
+        line: "Sound like someone the prospect would enjoy hearing from — approachable but not overly familiar.",
       },
       {
         value: "professional",
         label: "Professional",
-        line: "Keep the tone credible while still using plain, human language.",
+        line: "Stay credible and measured. Plain language, but no contractions or casual phrasing.",
       },
       {
         value: "direct",
         label: "Direct",
-        line: "Be direct and get to the point quickly.",
+        line: "Lead with the point. Cut setup sentences. One sentence per idea.",
       },
-      { value: "warm", label: "Warm", line: "Use a warm, genuine voice." },
+      {
+        value: "warm",
+        label: "Warm",
+        line: "Use a genuine, human voice. Contractions welcome. A single exclamation point is acceptable if it fits naturally.",
+      },
       {
         value: "confident",
         label: "Confident",
-        line: "Sound confident without being pushy.",
+        line: "State the value plainly, without hedging. Avoid words like 'maybe', 'perhaps', 'just checking'.",
       },
       {
         value: "casual",
         label: "Casual",
-        line: "Keep it casual and conversational.",
+        line: "Write exactly as you would text a peer. Short sentences, contractions, no formalities.",
       },
     ],
   },
@@ -91,22 +97,25 @@ export const BUILDER_FIELDS: BuilderField[] = [
     label: "Length",
     type: "select",
     section: "guideline",
+    // NOTE: this field overrides the base prompt's default 60-90 word range.
+    // The generated prompt must place this instruction AFTER BASE_CONSTRAINTS
+    // so the model treats the user's choice as the active ceiling.
     defaultValue: "short",
     options: [
       {
         value: "tiny",
         label: "Very short (under 60 words)",
-        line: "Keep it very short, under 60 words.",
+        line: "Keep it under 60 words — this overrides the default length. Cut everything that is not the hook, the point, or the close.",
       },
       {
         value: "short",
         label: "Short (under 90 words)",
-        line: "Keep it concise, under 90 words.",
+        line: "Keep it under 90 words. One hook, one point, one close.",
       },
       {
         value: "medium",
         label: "Medium (under 150 words)",
-        line: "Keep it focused, under 150 words.",
+        line: "Up to 150 words is acceptable here — use the extra room for one additional piece of context or proof, not filler.",
       },
     ],
   },
@@ -121,27 +130,27 @@ export const BUILDER_FIELDS: BuilderField[] = [
       {
         value: "role",
         label: "Their role",
-        line: "Use the prospect's role only as context for relevance, not as a generic opener.",
+        line: "Use the prospect's role as context for relevance, not as a generic opener.",
       },
       {
         value: "company",
         label: "Their company",
-        line: "Use the prospect's company context to make the offering relevant to them.",
+        line: "Use the prospect's company context to make the offering relevant to their specific situation.",
       },
       {
         value: "recent",
         label: "Recent activity",
-        line: "Prefer a recent work item, post, launch, or talking point as the opening hook when available.",
+        line: "Prefer a recent work item, post, launch, or talking point as the opening hook when one is available and specific.",
       },
       {
         value: "shared",
         label: "Shared connection",
-        line: "Mention a relevant shared interest or connection only if it is present in the context.",
+        line: "Mention a shared interest or connection only if it is explicitly present in the prospect's context block.",
       },
       {
         value: "painpoint",
         label: "Likely pain point",
-        line: "Tie the message to a likely pain point only when the context supports it.",
+        line: "Tie the message to a likely pain point, but only when the context directly supports it — do not infer or invent.",
       },
     ],
   },
@@ -155,27 +164,27 @@ export const BUILDER_FIELDS: BuilderField[] = [
       {
         value: "soft",
         label: "Soft question",
-        line: "End with a soft, low pressure question that invites a reply.",
+        line: "Close with a soft, open question that invites a reply without any pressure.",
       },
       {
         value: "meeting",
         label: "Conversation",
-        line: "End by softly asking whether a short conversation would be useful, without demanding a meeting.",
+        line: "Close by gently suggesting a short conversation — frame it as optional and easy to decline.",
       },
       {
         value: "reply",
         label: "Easy yes or no",
-        line: "End by asking a simple yes or no question to make replying easy.",
+        line: "Close with a yes or no question to make replying as easy as possible.",
       },
       {
         value: "resource",
         label: "Offer a resource",
-        line: "End by offering a useful resource with no strings attached.",
+        line: "Close by offering something useful — a link, example, or short write-up — with no strings attached.",
       },
       {
         value: "none",
         label: "No explicit CTA",
-        line: "Do not force a call to action; let the message breathe.",
+        line: "Do not force a call to action. Let the message end naturally.",
       },
     ],
   },
@@ -191,11 +200,15 @@ export const BUILDER_FIELDS: BuilderField[] = [
         label: "Buzzwords",
         line: "corporate buzzwords and jargon",
       },
-      { value: "salesy", label: "Salesy tone", line: "a salesy or pushy tone" },
+      {
+        value: "salesy",
+        label: "Salesy tone",
+        line: "a salesy or pushy tone",
+      },
       {
         value: "long",
         label: "Long paragraphs",
-        line: "long paragraphs and walls of text",
+        line: "long paragraphs and walls of text — use short sentences instead",
       },
       {
         value: "flattery",
@@ -205,13 +218,13 @@ export const BUILDER_FIELDS: BuilderField[] = [
       {
         value: "templates",
         label: "Template feel",
-        line: "anything that reads like a mass template",
+        line: "anything that reads like a mass template — if swapping the name still works, rewrite it",
       },
     ],
   },
 ];
 
-/** A fresh form state seeded from each field's default selection. */
+/** Fresh form state seeded from each field's default selection. */
 export function defaultBuilderState(): BuilderState {
   const state: BuilderState = {};
   for (const field of BUILDER_FIELDS) {
@@ -240,8 +253,11 @@ function selectedLines(field: BuilderField, state: BuilderState): string[] {
 }
 
 /**
- * Composes a system-prompt draft from the builder selections. Output is plain,
- * editable boilerplate and never contains em dashes.
+ * Composes a user customization prompt from the builder selections.
+ *
+ * This output is passed as `userSystemPrompt` to `buildMessageSystemPrompt`,
+ * which wraps it in the base layer. Do NOT restate base rules here — only
+ * add genuinely new instructions that the base layer does not cover.
  */
 export function buildPromptFromConfig(state: BuilderState): string {
   const introField = BUILDER_FIELDS.find((f) => f.section === "intro");
@@ -279,16 +295,10 @@ export function buildPromptFromConfig(state: BuilderState): string {
     parts.push("", "Avoid the following:", ...avoidItems.map((a) => `- ${a}`));
   }
 
-  parts.push(
-    "",
-    "Write only the message itself, ready to send. Sound like a real person, not a template.",
-    "Do not override the baseline rules: use only facts from the context, open with a concrete prospect-specific hook when one is available, use plain language, never use em dashes, and avoid hard meeting asks.",
-  );
-
   return parts.join("\n");
 }
 
-/** A sensible default prompt name derived from the chosen goal. */
+/** Sensible default prompt name derived from the chosen goal. */
 export function suggestedNameFromState(state: BuilderState): string {
   const introField = BUILDER_FIELDS.find((f) => f.section === "intro");
   const value = introField ? state[introField.id] : undefined;

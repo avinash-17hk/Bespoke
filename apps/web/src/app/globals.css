@@ -277,6 +277,20 @@ body {
  * paint, no animation, so reduced-motion is a non-issue. Masked so the grid
  * fades out before it reaches the bottom and never competes with content.
  */
+/*
+ * Lenis wraps page content in an inner div that otherwise sizes to content only,
+ * breaking h-full flex layouts (e.g. full-height conversation threads).
+ */
+.dashboard-scroll > div {
+  display: flex;
+  min-height: 100%;
+  flex-direction: column;
+}
+
+.dashboard-scroll:has([data-thread-shell]) {
+  overflow: hidden;
+}
+
 .dashboard-atmosphere {
   position: fixed;
   inset: 0;

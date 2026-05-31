@@ -1,7 +1,10 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import { motion } from "motion/react";
+import { Check, Copy } from "lucide-react";
 import type { ConversationMessage } from "@bespoke/db";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { timeAgo } from "@/lib/format";
 
@@ -16,12 +19,35 @@ const ROLE_LABEL: Record<string, string> = {
  * tint and render in mono to echo the generated-message panel; the prospect's
  * pasted replies sit on the left in the UI sans face.
  */
-export function MessageBubble({
-  message,
-}: {
-  message: ConversationMessage;
-}) {
+export function MessageBubble({ message }: { message: ConversationMessage }) {
   const isMine = message.role === "assistant" || message.role === "user";
+  const [copied, setCopied] = useState(false);
+  const resetTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (resetTimerRef.current) {
+        window.clearTimeout(resetTimerRef.current);
+      }
+    };
+  }, []);
+
+  async function copyMessage() {
+    try {
+      await navigator.clipboard.writeText(message.content);
+    } catch {
+      return;
+    }
+
+    setCopied(true);
+    if (resetTimerRef.current) {
+      window.clearTimeout(resetTimerRef.current);
+    }
+    resetTimerRef.current = window.setTimeout(() => {
+      setCopied(false);
+      resetTimerRef.current = null;
+    }, 1600);
+  }
 
   return (
     <motion.div
@@ -43,10 +69,33 @@ export function MessageBubble({
       >
         <p className="whitespace-pre-wrap break-words">{message.content}</p>
       </div>
-      <span className="px-1 text-[10px] text-[var(--text-muted)]">
-        {ROLE_LABEL[message.role] ?? message.role} ·{" "}
-        {timeAgo(message.createdAt)}
-      </span>
+      <div className="flex items-center gap-1.5 px-1 text-[10px] text-[var(--text-muted)]">
+        <span>
+          {ROLE_LABEL[message.role] ?? message.role} ·{" "}
+          {timeAgo(message.createdAt)}
+        </span>
+        {isMine ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            aria-label={copied ? "Message copied" : "Copy message"}
+            title={copied ? "Copied" : "Copy message"}
+            onClick={() => void copyMessage()}
+            className={cn(
+              "size-5 text-[var(--text-muted)] hover:text-[var(--text-primary)]",
+              copied &&
+                "text-[var(--accent-text)] hover:text-[var(--accent-text)]",
+            )}
+          >
+            {copied ? (
+              <Check className="h-3 w-3" />
+            ) : (
+              <Copy className="h-3 w-3" />
+            )}
+          </Button>
+        ) : null}
+      </div>
     </motion.div>
   );
 }

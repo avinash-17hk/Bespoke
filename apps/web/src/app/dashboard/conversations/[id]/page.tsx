@@ -26,27 +26,34 @@ export default function ConversationThreadPage() {
   }
 
   return (
-    <div className="mx-auto flex min-h-full max-w-3xl flex-col gap-4">
-      <div className="flex items-center justify-between gap-3">
-        <Link
-          href="/dashboard/conversations"
-          className="inline-flex w-fit items-center gap-1.5 text-sm text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Conversations
-        </Link>
-        {conversation.data ? (
-          <StatusBadge status={conversation.data.status} />
-        ) : null}
-      </div>
+    <div className="flex min-h-0 flex-1 flex-col p-4 sm:p-6">
+      <header className="relative z-10 shrink-0 space-y-4 bg-[var(--bg-base)] pb-4">
+        <div className="flex items-center justify-between gap-3">
+          <Link
+            href="/dashboard/conversations"
+            className="inline-flex w-fit items-center gap-1.5 text-sm text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Conversations
+          </Link>
+          {conversation.data ? (
+            <StatusBadge status={conversation.data.status} />
+          ) : null}
+        </div>
 
-      {conversation.isLoading ? (
-        <div className="flex flex-col gap-4">
+        {conversation.isLoading ? (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             {Array.from({ length: 3 }).map((_, i) => (
               <Skeleton key={i} className="h-20 w-full" />
             ))}
           </div>
+        ) : conversation.data ? (
+          <ParticipantCards participants={conversation.data.participants} />
+        ) : null}
+      </header>
+
+      {conversation.isLoading ? (
+        <div className="min-h-0 flex-1 overflow-y-auto">
           <Skeleton className="h-64 w-full" />
         </div>
       ) : conversation.isError ? (
@@ -59,15 +66,17 @@ export default function ConversationThreadPage() {
         </p>
       ) : (
         <>
-          <ParticipantCards participants={conversation.data.participants} />
-
-          <div className="flex-1 pt-2">
+          <div
+            data-lenis-prevent
+            className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-0.5 pb-2"
+            aria-label="Conversation messages"
+          >
             <ChatThread messages={messages} awaitingReply={awaitingReply} />
           </div>
 
-          <div className="sticky bottom-0 -mx-1 bg-gradient-to-t from-[var(--bg-base)] via-[var(--bg-base)] to-transparent px-1 pb-1 pt-4">
+          <footer className="relative z-10 shrink-0 border-t border-[var(--border-default)] bg-[var(--bg-base)] pt-4">
             <ChatComposer disabled={awaitingReply} onSend={handleSend} />
-          </div>
+          </footer>
         </>
       )}
     </div>
