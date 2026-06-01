@@ -1,3 +1,4 @@
+import { desc } from "drizzle-orm";
 import { boolean, index, pgTable, text, uuid } from "drizzle-orm/pg-core";
 import { user } from "./auth";
 import { timestamps } from "./_shared";
@@ -18,5 +19,12 @@ export const prompts = pgTable(
     isDefault: boolean("is_default").notNull().default(false),
     ...timestamps,
   },
-  (table) => [index("prompts_user_id_idx").on(table.userId)],
+  (table) => [
+    index("prompts_user_id_idx").on(table.userId),
+    index("prompts_user_id_created_at_id_idx").on(
+      table.userId,
+      desc(table.createdAt),
+      desc(table.id),
+    ),
+  ],
 );

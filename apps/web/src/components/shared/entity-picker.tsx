@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { Check, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useDebounce } from "@/lib/hooks/use-debounce";
@@ -107,11 +107,13 @@ export function EntityPicker<T>({
   const [search, setSearch] = useState("");
   const debounced = useDebounce(search);
   const list = useItems(debounced, open);
+  const scrollViewportRef = useRef<HTMLDivElement>(null);
 
   const sentinelRef = useInfiniteScroll({
     hasNextPage: list.hasNextPage,
     isFetchingNextPage: list.isFetchingNextPage,
     fetchNextPage: list.fetchNextPage,
+    rootRef: scrollViewportRef,
   });
 
   const isEmpty = !list.isLoading && list.items.length === 0;
@@ -164,7 +166,7 @@ export function EntityPicker<T>({
             placeholder={`Search ${noun}s…`}
           />
 
-          <ScrollArea className="h-72 -mx-1 px-1">
+          <ScrollArea className="h-72 -mx-1 px-1" viewportRef={scrollViewportRef}>
             {list.isLoading ? (
               <p className="py-8 text-center text-xs text-[var(--text-muted)]">
                 Loading…

@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  useInfiniteQuery,
   useMutation,
   useQuery,
   useQueryClient,
@@ -8,9 +9,11 @@ import {
 import type { Conversation, ConversationMessage } from "@bespoke/db";
 import type {
   ConversationParticipants,
+  CursorPage,
   StartConversationCandidate,
 } from "@bespoke/shared";
 import { apiClient } from "../api-client";
+import { listSearchParams } from "./_list-cache";
 
 export interface ConversationWithMessages extends Conversation {
   messages: ConversationMessage[];
@@ -33,6 +36,8 @@ export interface ConversationDetail extends ConversationWithMessages {
   participants: ConversationParticipants;
 }
 
+const PAGE_SIZE = 20;
+
 const conversationKeys = {
   all: ["conversations", "all"] as const,
   list: (prospectId: string) =>
@@ -41,24 +46,33 @@ const conversationKeys = {
   startCandidates: ["conversations", "start-candidates"] as const,
 };
 
-/** Conversations for a prospect. */
+/** Conversations for a prospect (infinite-paginated). */
 export function useConversations(prospectId: string) {
-  return useQuery({
+  return useInfiniteQuery({
     queryKey: conversationKeys.list(prospectId),
-    queryFn: () =>
-      apiClient.get<ConversationListItem[]>(
-        `/api/conversations?prospectId=${prospectId}`,
-      ),
+    queryFn: ({ pageParam }) => {
+      const base = listSearchParams({ cursor: pageParam, limit: PAGE_SIZE });
+      const sep = base ? "&" : "?";
+      return apiClient.get<CursorPage<ConversationListItem>>(
+        `/api/conversations${base}${sep}prospectId=${prospectId}`,
+      );
+    },
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
     enabled: Boolean(prospectId),
   });
 }
 
 /** Every conversation for the signed-in user (Conversations tab). */
 export function useAllConversations() {
-  return useQuery({
+  return useInfiniteQuery({
     queryKey: conversationKeys.all,
-    queryFn: () =>
-      apiClient.get<ConversationListItem[]>("/api/conversations"),
+    queryFn: ({ pageParam }) =>
+      apiClient.get<CursorPage<ConversationListItem>>(
+        `/api/conversations${listSearchParams({ cursor: pageParam, limit: PAGE_SIZE })}`,
+      ),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
   });
 }
 

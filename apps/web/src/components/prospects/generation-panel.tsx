@@ -155,14 +155,15 @@ export function GenerationPanel({ prospectId }: { prospectId: string }) {
 
 function ConversationsList({ prospectId }: { prospectId: string }) {
   const conversations = useConversations(prospectId);
-  if (!conversations.data?.length) return null;
+  const items = conversations.data?.pages.flatMap((p) => p.items) ?? [];
+  if (!items.length) return null;
 
   return (
     <div className="flex flex-col gap-2">
       <h3 className="text-xs font-medium uppercase tracking-widest text-[var(--text-secondary)]">
         Conversations
       </h3>
-      {conversations.data.map((c) => (
+      {items.map((c) => (
         <Link
           key={c.id}
           href={`/dashboard/conversations/${c.id}`}

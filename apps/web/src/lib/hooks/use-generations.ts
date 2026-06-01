@@ -76,7 +76,9 @@ export function useWatchGeneration(id: string | null) {
     if (prevStatus.current !== undefined) {
       const prev = prevStatus.current;
       if ((prev === "pending" || prev === "processing") && curr === "failed") {
-        toast.error(query.data.failureReason ?? "Generation failed");
+        toast.error(query.data.failureReason ?? "Generation failed", {
+          description: "Try switching your API key in Settings.",
+        });
       }
     }
     prevStatus.current = curr;

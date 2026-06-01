@@ -1,3 +1,4 @@
+import { desc } from "drizzle-orm";
 import { index, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import type { OfferingSourceType, OfferingStatus } from "@bespoke/shared";
 import { user } from "./auth";
@@ -27,7 +28,14 @@ export const offerings = pgTable(
     status: text("status").$type<OfferingStatus>().notNull().default("draft"),
     ...timestamps,
   },
-  (table) => [index("offerings_user_id_idx").on(table.userId)],
+  (table) => [
+    index("offerings_user_id_idx").on(table.userId),
+    index("offerings_user_id_created_at_id_idx").on(
+      table.userId,
+      desc(table.createdAt),
+      desc(table.id),
+    ),
+  ],
 );
 
 /**

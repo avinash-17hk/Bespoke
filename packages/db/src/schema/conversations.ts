@@ -1,3 +1,4 @@
+import { desc } from "drizzle-orm";
 import {
   index,
   jsonb,
@@ -30,7 +31,14 @@ export const conversations = pgTable(
     initialMessageId: uuid("initial_message_id"),
     ...timestamps,
   },
-  (table) => [index("conversations_prospect_id_idx").on(table.prospectId)],
+  (table) => [
+    index("conversations_prospect_id_idx").on(table.prospectId),
+    index("conversations_prospect_id_created_at_id_idx").on(
+      table.prospectId,
+      desc(table.createdAt),
+      desc(table.id),
+    ),
+  ],
 );
 
 /**

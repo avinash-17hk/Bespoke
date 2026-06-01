@@ -6,6 +6,8 @@ export const createConversationBody = z.object({
 
 export const listConversationsQuery = z.object({
   prospectId: z.string().uuid().optional(),
+  cursor: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
 });
 
 export const conversationIdParams = z.object({

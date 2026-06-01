@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type RefObject } from "react";
 
 interface UseInfiniteScrollOptions {
   hasNextPage: boolean;
@@ -8,6 +8,8 @@ interface UseInfiniteScrollOptions {
   fetchNextPage: () => void;
   /** Root margin so the next page loads slightly before the sentinel is hit. */
   rootMargin?: string;
+  /** Scroll container to observe against. Defaults to browser viewport. */
+  rootRef?: RefObject<Element | null>;
 }
 
 /**
@@ -21,6 +23,7 @@ export function useInfiniteScroll({
   isFetchingNextPage,
   fetchNextPage,
   rootMargin = "240px",
+  rootRef,
 }: UseInfiniteScrollOptions) {
   const sentinelRef = useRef<HTMLDivElement | null>(null);
 
@@ -34,12 +37,12 @@ export function useInfiniteScroll({
           fetchNextPage();
         }
       },
-      { rootMargin },
+      { rootMargin, root: rootRef?.current ?? null },
     );
 
     observer.observe(node);
     return () => observer.disconnect();
-  }, [hasNextPage, isFetchingNextPage, fetchNextPage, rootMargin]);
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage, rootMargin, rootRef]);
 
   return sentinelRef;
 }

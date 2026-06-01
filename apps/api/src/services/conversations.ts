@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, isNull } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, isNull } from "drizzle-orm";
 import {
   schema,
   type Conversation,
@@ -8,9 +8,12 @@ import { JOB_NAME, QUEUE_NAME, enqueueJob } from "@bespoke/queue";
 import type {
   ConversationParticipants,
   ConversationStatus,
+  CursorPage,
+  ListQuery,
   MessageRole,
   StartConversationCandidate,
 } from "@bespoke/shared";
+import { clampLimit, decodeCursor, keysetBefore, toPage } from "./_cursor";
 import { db } from "../context";
 import { queues } from "../queue";
 import { getSettings } from "./settings";
@@ -201,17 +204,24 @@ export async function createFromMessage(
   };
 }
 
-/** Conversations for the user's prospects, newest first; optional prospect filter. */
+/**
+ * Cursor-paginated conversations for the user's prospects. Fixes the N+1 from
+ * the old implementation by batch-loading last messages, counts, and
+ * participants in 6 queries total regardless of page size.
+ */
 export async function listConversations(
   userId: string,
-  prospectId?: string,
-): Promise<ConversationListItem[]> {
-  const where = prospectId
-    ? and(
-        eq(schema.prospects.userId, userId),
-        eq(schema.conversations.prospectId, prospectId),
-      )
-    : eq(schema.prospects.userId, userId);
+  query: ListQuery & { prospectId?: string } = {},
+): Promise<CursorPage<ConversationListItem>> {
+  const limit = clampLimit(query.limit);
+  const keyset = keysetBefore(
+    schema.conversations.createdAt,
+    schema.conversations.id,
+    decodeCursor(query.cursor),
+  );
+  const prospectFilter = query.prospectId
+    ? eq(schema.conversations.prospectId, query.prospectId)
+    : undefined;
 
   const rows = await db
     .select({ conversation: schema.conversations })
@@ -220,34 +230,160 @@ export async function listConversations(
       schema.prospects,
       eq(schema.conversations.prospectId, schema.prospects.id),
     )
-    .where(where)
-    .orderBy(desc(schema.conversations.createdAt));
+    .where(and(eq(schema.prospects.userId, userId), prospectFilter, keyset))
+    .orderBy(desc(schema.conversations.createdAt), desc(schema.conversations.id))
+    .limit(limit + 1);
 
-  return Promise.all(
-    rows.map(async ({ conversation }) => {
-      const [messages, participants] = await Promise.all([
-        loadThread(conversation.id),
-        loadParticipants(
-          conversation.prospectId,
-          conversation.initialMessageId,
-        ),
-      ]);
-      const lastMessage = messages[messages.length - 1] ?? null;
-      return {
-        ...conversation,
-        participants,
-        lastMessage: lastMessage
-          ? {
-              role: lastMessage.role,
-              content: lastMessage.content,
-              createdAt: lastMessage.createdAt,
-            }
+  const page = toPage(rows.map((r) => r.conversation), limit);
+  if (page.items.length === 0) return { items: [], nextCursor: null };
+
+  const conversationIds = page.items.map((c) => c.id);
+  const prospectIds = [...new Set(page.items.map((c) => c.prospectId))];
+  const initialMessageIds = page.items
+    .map((c) => c.initialMessageId)
+    .filter((id): id is string => id !== null);
+
+  const [lastMessages, messageCounts, prospects] = await Promise.all([
+    db
+      .selectDistinctOn([schema.conversationMessages.conversationId], {
+        conversationId: schema.conversationMessages.conversationId,
+        role: schema.conversationMessages.role,
+        content: schema.conversationMessages.content,
+        createdAt: schema.conversationMessages.createdAt,
+      })
+      .from(schema.conversationMessages)
+      .where(inArray(schema.conversationMessages.conversationId, conversationIds))
+      .orderBy(
+        schema.conversationMessages.conversationId,
+        desc(schema.conversationMessages.createdAt),
+      ),
+    db
+      .select({
+        conversationId: schema.conversationMessages.conversationId,
+        count: count(),
+      })
+      .from(schema.conversationMessages)
+      .where(inArray(schema.conversationMessages.conversationId, conversationIds))
+      .groupBy(schema.conversationMessages.conversationId),
+    db
+      .select({
+        id: schema.prospects.id,
+        name: schema.prospects.name,
+        jobTitle: schema.prospects.jobTitle,
+        companyName: schema.prospects.companyName,
+        email: schema.prospects.email,
+        notes: schema.prospects.notes,
+      })
+      .from(schema.prospects)
+      .where(inArray(schema.prospects.id, prospectIds)),
+  ]);
+
+  const genByMessageId = new Map<
+    string,
+    { offeringId: string | null; promptId: string | null }
+  >();
+  let offeringIds: string[] = [];
+  let promptIds: string[] = [];
+
+  if (initialMessageIds.length > 0) {
+    const gens = await db
+      .select({
+        messageId: schema.generatedMessages.id,
+        offeringId: schema.aiGenerations.offeringId,
+        promptId: schema.aiGenerations.promptId,
+      })
+      .from(schema.generatedMessages)
+      .innerJoin(
+        schema.aiGenerations,
+        eq(schema.generatedMessages.generationId, schema.aiGenerations.id),
+      )
+      .where(inArray(schema.generatedMessages.id, initialMessageIds));
+
+    for (const gen of gens) {
+      genByMessageId.set(gen.messageId, {
+        offeringId: gen.offeringId,
+        promptId: gen.promptId,
+      });
+      if (gen.offeringId) offeringIds.push(gen.offeringId);
+      if (gen.promptId) promptIds.push(gen.promptId);
+    }
+    offeringIds = [...new Set(offeringIds)];
+    promptIds = [...new Set(promptIds)];
+  }
+
+  const [offerings, prompts] = await Promise.all([
+    offeringIds.length > 0
+      ? db
+          .select({
+            id: schema.offerings.id,
+            name: schema.offerings.name,
+            description: schema.offerings.description,
+            summary: schema.offerings.summary,
+            targetAudience: schema.offerings.targetAudience,
+            problemSolved: schema.offerings.problemSolved,
+            uniqueValueProp: schema.offerings.uniqueValueProp,
+          })
+          .from(schema.offerings)
+          .where(inArray(schema.offerings.id, offeringIds))
+      : Promise.resolve([] as {
+          id: string;
+          name: string;
+          description: string | null;
+          summary: string | null;
+          targetAudience: string | null;
+          problemSolved: string | null;
+          uniqueValueProp: string | null;
+        }[]),
+    promptIds.length > 0
+      ? db
+          .select({
+            id: schema.prompts.id,
+            name: schema.prompts.name,
+            systemPrompt: schema.prompts.systemPrompt,
+            isDefault: schema.prompts.isDefault,
+          })
+          .from(schema.prompts)
+          .where(inArray(schema.prompts.id, promptIds))
+      : Promise.resolve([] as {
+          id: string;
+          name: string;
+          systemPrompt: string;
+          isDefault: boolean;
+        }[]),
+  ]);
+
+  const lastMsgByConvId = new Map(lastMessages.map((m) => [m.conversationId, m]));
+  const countByConvId = new Map(messageCounts.map((c) => [c.conversationId, c.count]));
+  const prospectById = new Map(prospects.map((p) => [p.id, p]));
+  const offeringById = new Map(offerings.map((o) => [o.id, o]));
+  const promptById = new Map(prompts.map((p) => [p.id, p]));
+
+  const items: ConversationListItem[] = page.items.map((conversation) => {
+    const lastMsg = lastMsgByConvId.get(conversation.id) ?? null;
+    const genData = conversation.initialMessageId
+      ? (genByMessageId.get(conversation.initialMessageId) ?? null)
+      : null;
+
+    return {
+      ...conversation,
+      participants: {
+        prospect: prospectById.get(conversation.prospectId) ?? null,
+        offering: genData?.offeringId
+          ? (offeringById.get(genData.offeringId) ?? null)
           : null,
-        messageCount: messages.length,
-        awaitingReply: lastMessage?.role === "prospect",
-      };
-    }),
-  );
+        prompt: genData?.promptId
+          ? (promptById.get(genData.promptId) ?? null)
+          : null,
+      },
+      lastMessage: lastMsg
+        ? { role: lastMsg.role, content: lastMsg.content, createdAt: lastMsg.createdAt }
+        : null,
+      messageCount: countByConvId.get(conversation.id) ?? 0,
+      awaitingReply: lastMsg?.role === "prospect",
+    };
+  });
+
+  return { items, nextCursor: page.nextCursor };
 }
 
 export async function getConversation(

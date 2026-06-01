@@ -28,7 +28,7 @@ export async function conversationRoutes(
     async (request) => ({
       data: await conversationsService.listConversations(
         request.userId,
-        request.query.prospectId,
+        request.query,
       ),
     }),
   );

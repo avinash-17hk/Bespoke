@@ -27,6 +27,7 @@ contextual follow-up that continues the conversation naturally.
 - [What it does](#what-it-does)
 - [Tech stack](#tech-stack)
 - [Architecture](#architecture)
+- [Error handling](#error-handling)
 - [Project structure](#project-structure)
 - [Running locally](#running-locally)
 - [Environment variables](#environment-variables)
@@ -50,6 +51,7 @@ contextual follow-up that continues the conversation naturally.
 | **Analytics** | Generation volume, offering usage breakdown, top-rated messages, conversations with replies: all live counts from the database. |
 | **Per-user model selection** | Gemini models free on the platform key; Anthropic/OpenAI models run on the user's own encrypted OpenRouter key (AES-256-GCM at rest). |
 | **Background job pipeline** | All scraping and AI work queued via BullMQ: the API never blocks; job status is visible per asset while work runs. |
+| **Transparent error surfacing** | Worker failure reasons (rate limit, model unavailable, scrape error) are stored in Postgres and returned in polling responses; the UI shows them inline and as toasts — no log access needed to diagnose a failure. |
 
 ---
 
@@ -236,6 +238,56 @@ directly to Cloudinary using a short-lived signature the API issues:
 
 ---
 
+## Error handling
+
+Failures are surfaced at every layer so the user never needs to inspect server
+logs to understand what went wrong.
+
+### API response shape
+
+All errors follow a consistent envelope:
+
+```json
+{ "error": "...", "code": "...", "issues": [...], "details": "..." }
+```
+
+- **`error`**: human-readable message, always the real one (never "Internal
+  server error").
+- **`code`**: machine-readable string (`VALIDATION_ERROR`, `NOT_FOUND`,
+  `AI_GENERATION_FAILED`, `OPENROUTER_KEY_REQUIRED`, …).
+- **`issues`** (validation only): field-level Zod errors —
+  `[{ "path": "body.offeringId", "message": "Required" }]`.
+- **`details`**: optional extra context for unexpected errors.
+
+Structured via `AppError` (`apps/api/src/lib/errors.ts`); Fastify's
+`setErrorHandler` catches both typed `AppError` throws and raw unhandled
+exceptions, so every response carries a readable message.
+
+### Worker failure propagation
+
+The worker writes the exact exception message to `generation_jobs.error` and
+`scrape_jobs.error` on failure (e.g. `"429 Too Many Requests from OpenRouter"`).
+Polling endpoints surface these:
+
+- `GET /api/generations/:id` → `failureReason: string | null`
+- `GET /api/prospects/:id` → `assets[].failureReason: string | null`
+
+### UI feedback
+
+| Trigger | Where shown |
+|---|---|
+| Generation worker fails (rate limit, bad key, model unavailable) | `toast.error(failureReason)` + "Try switching your API key in Settings." via `useWatchGeneration` |
+| Asset scrape worker fails | `toast.error(failureReason, { description: url })` via `useWatchProspectScrape` |
+| Failed asset on prospect detail page | Inline error text under the asset name in red |
+| Any mutation error (create, update, delete) | `toast.error(error.message)` at the callsite |
+| Zod validation rejected by API | `toast.error` with the field-level issue message |
+
+`useWatchGeneration` and `useWatchProspectScrape` use a `useRef`-based previous-state
+tracker to detect transitions (pending/processing → failed) rather than
+firing on every poll, so toasts only appear once when a job actually settles.
+
+---
+
 ## Project structure
 
 ```
@@ -322,6 +374,7 @@ Zod-validated `config.ts`: `process.env` is never accessed directly elsewhere.
 | `CLOUDINARY_API_KEY`    | api              | Cloudinary API key (returned in the signature) |
 | `CLOUDINARY_API_SECRET` | api              | Cloudinary secret for signing: server-only    |
 | `NEXT_PUBLIC_API_URL`   | web              | Fastify API origin                             |
+| `GITHUB_TOKEN`          | worker           | *(optional)* GitHub REST API token. GitHub URLs are scraped via the GitHub API first (higher rate limits, structured data); falls back to Firecrawl on any error. Without this token the fallback always runs. |
 
 > The Vercel AI SDK is a library: it needs no key of its own. The platform
 > `OPENROUTER_API_KEY` covers extraction and free (Gemini) generations; paid
@@ -433,6 +486,12 @@ reach the worker with a paid model and no key.
   hit the API process and the API secret never leaves the server. Only the
   returned `public_id` is stored (`prospect_assets.file_key`); the worker
   rebuilds the delivery URL on demand for vision extraction.
+- **Worker failure reasons persisted in Postgres**: `generation_jobs.error` and
+  `scrape_jobs.error` store the raw exception message on failure. Polling
+  endpoints return these as `failureReason`, so the UI can show "Rate limit
+  exceeded from OpenRouter" without requiring log access. The alternative
+  (inspecting BullMQ/Redis job state) would add infrastructure coupling and
+  make failures invisible once a job is garbage-collected from Redis.
 
 ---
 

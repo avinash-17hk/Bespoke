@@ -104,15 +104,6 @@ export function ProfileMenu() {
         </DropdownMenu>
 
         <ThemeToggle />
-
-        <button
-          type="button"
-          onClick={() => setConfirmOpen(true)}
-          aria-label="Sign out"
-          className="rounded-md p-2 text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-surface-hover)] hover:text-[var(--text-primary)] focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:outline-none"
-        >
-          <LogOut className="h-4 w-4" />
-        </button>
       </div>
 
       <ConfirmDialog

@@ -1,0 +1,2 @@
+CREATE INDEX "prompts_user_id_created_at_id_idx" ON "prompts" USING btree ("user_id","created_at" desc,"id" desc);--> statement-breakpoint
+CREATE INDEX "conversations_prospect_id_created_at_id_idx" ON "conversations" USING btree ("prospect_id","created_at" desc,"id" desc);

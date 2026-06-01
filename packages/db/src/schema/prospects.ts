@@ -1,3 +1,4 @@
+import { desc } from "drizzle-orm";
 import {
   index,
   integer,
@@ -28,7 +29,14 @@ export const prospects = pgTable(
     contextUpdatedAt: timestamp("context_updated_at"),
     ...timestamps,
   },
-  (table) => [index("prospects_user_id_idx").on(table.userId)],
+  (table) => [
+    index("prospects_user_id_idx").on(table.userId),
+    index("prospects_user_id_created_at_id_idx").on(
+      table.userId,
+      desc(table.createdAt),
+      desc(table.id),
+    ),
+  ],
 );
 
 /**
